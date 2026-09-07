@@ -1,0 +1,2 @@
+# Deterministic fake credential in testStderrIsSanitized; the test verifies subprocess diagnostics redact it.
+Tests/TokenUsageCoreTests/JSONRPCProcessRunnerTests.swift:generic-api-key:246

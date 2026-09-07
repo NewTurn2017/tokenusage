@@ -1,0 +1,32 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.app/
+*.profraw
+*.profdata
+*.profile
+*.xcuserstate
+
+# Never stage local provider credentials or authentication files.
+auth.json*
+*.auth
+*.auth.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local agent records are not part of the public source.
+.omo/
+.senior-mode/
+.codegraph
+.senpi/
+.agents/
+.claude/
+*.log
