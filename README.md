@@ -1,5 +1,13 @@
 # Token Usage
 
+## 다운로드와 설치
+
+[v0.1.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.1.0)에서
+`TokenUsage-0.1.0-macos-universal.zip`을 받아 압축을 풀고,
+`Token Usage.app`을 응용 프로그램 폴더로 옮겨 실행하세요.
+Apple Silicon과 Intel용 실행 파일을 함께 포함하며 macOS 14 이상이 필요합니다.
+서비스별 로그인 요구 사항은 아래를 참고하세요.
+
 ## 무엇을 하나요
 
 Token Usage는 macOS 메뉴 막대에서 AI 서비스의 사용량과 한도, 초기화 시각을 한눈에 보여 주는 네이티브 SwiftUI 앱입니다. 여러 계정과 프로필을 저장해 전환할 수 있고, 새로고침에 실패하면 가능한 경우 마지막으로 확인한 값을 표시합니다.
@@ -56,7 +64,7 @@ swift test
 
 ## 현재 배포 상태
 
-공개 공증 릴리스는 아직 게시되지 않았습니다. 로컬 릴리스 후보는 Developer ID로 서명하고 Hardened Runtime을 적용했지만, Apple 공증 전이므로 Gatekeeper가 신뢰하는 공개 배포판은 아닙니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 ad hoc 서명을 사용합니다. 공개 배포 전에 Apple 공증이 필요합니다.
+v0.1.0 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티켓 동봉을 완료했습니다. 압축 해제한 앱의 Gatekeeper 승인도 확인했습니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 로컬 테스트용 ad hoc 서명을 사용하므로, 직접 빌드한 앱과 공증된 다운로드 파일은 구분해야 합니다.
 
 자동 업데이트 기능은 현재 코드에서 확인되지 않았습니다. 따라서 자동 업데이트를 제공하지 않습니다.
 
