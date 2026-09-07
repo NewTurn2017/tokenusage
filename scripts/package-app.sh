@@ -44,6 +44,7 @@ done
 
 [[ -n "$APP_DIR" && "$APP_DIR" == *.app && "$APP_DIR" != "/" ]] || fail "invalid app output path"
 [[ -f "$ROOT_DIR/Resources/Info.plist" ]] || fail "missing Resources/Info.plist"
+[[ -f "$ROOT_DIR/LICENSE" ]] || fail "missing project LICENSE"
 [[ -f "$ROOT_DIR/Resources/AppIcon/TokenUsage.icns" ]] || fail "missing Resources/AppIcon/TokenUsage.icns"
 [[ -f "$ROOT_DIR/Sources/TokenUsageApp/Resources/ProviderIcons/Anthropic.svg" ]] || fail "missing Resources/ProviderIcons/Anthropic.svg"
 [[ -f "$ROOT_DIR/Sources/TokenUsageApp/Resources/ProviderIcons/OpenAI.svg" ]] || fail "missing Resources/ProviderIcons/OpenAI.svg"
@@ -92,6 +93,7 @@ mkdir -p "$APP_DIR/Contents/MacOS" \
 cp "$BINARY_PATH" "$APP_DIR/Contents/MacOS/$PRODUCT_NAME"
 chmod 0755 "$APP_DIR/Contents/MacOS/$PRODUCT_NAME"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "$ROOT_DIR/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
 cp "$ROOT_DIR/Resources/AppIcon/TokenUsage.icns" "$APP_DIR/Contents/Resources/TokenUsage.icns"
 cp "$ROOT_DIR/Sources/TokenUsageApp/Resources/ProviderIcons/Anthropic.svg" "$APP_DIR/Contents/Resources/ProviderIcons/Anthropic.svg"
 cp "$ROOT_DIR/Sources/TokenUsageApp/Resources/ProviderIcons/OpenAI.svg" "$APP_DIR/Contents/Resources/ProviderIcons/OpenAI.svg"

@@ -42,6 +42,7 @@ LS_UI_ELEMENT="$(/usr/bin/plutil -extract LSUIElement raw -o - "$PLIST_PATH")"
 for resource in \
     "Contents/Resources/TokenUsage.icns" \
     "Contents/Resources/ATTRIBUTION.md" \
+    "Contents/Resources/LICENSE" \
     "Contents/Resources/ProviderIcons/Anthropic.svg" \
     "Contents/Resources/ProviderIcons/OpenAI.svg" \
     "Contents/Resources/MenuBarIcons/anthropic.png" \
