@@ -42,9 +42,13 @@ final class ClaudeUsageClientTests: XCTestCase {
 
         let request = try XCTUnwrap(fixture.requests.first)
         XCTAssertEqual(fixture.requests.count, 1)
-        XCTAssertEqual(request.url, "https://api.anthropic.com/api/oauth/usage")
+        XCTAssertEqual(
+            request.url,
+            "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
+        )
         XCTAssertEqual(request.method, "GET")
         XCTAssertEqual(request.anthropicBeta, "oauth-2025-04-20")
+        XCTAssertEqual(request.userAgent, "claude-cli/2.1.283 (external, cli)")
         XCTAssertTrue(request.hasBearerAuthorization)
     }
 

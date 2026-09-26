@@ -32,7 +32,15 @@ extension ClaudeUsageClientError: LocalizedError {
 }
 
 public struct ClaudeUsageClient: UsageProviding, Sendable {
-    public static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    /// `cedar_ember=1` adds the limit-reset credit block to the same usage read, so the credits
+    /// cost no extra request against the endpoint's rate limit. `skip_spend=1` drops the spend
+    /// fields this app does not decode.
+    public static let endpoint = URL(
+        string: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
+    )!
+    /// The server only reports reset credits to the Claude Code CLI surface, which it recognizes
+    /// by this User-Agent prefix; any other agent is answered `ineligible_reason: "surface"`.
+    public static let userAgent = "claude-cli/2.1.283 (external, cli)"
     public static let credentialName = "Claude Code-credentials"
 
     private let readCredential: @Sendable (String) async throws -> Data?
@@ -111,6 +119,7 @@ public struct ClaudeUsageClient: UsageProviding, Sendable {
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
 
         let data: Data
         let response: URLResponse

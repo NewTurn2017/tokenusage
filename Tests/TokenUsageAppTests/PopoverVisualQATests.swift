@@ -34,6 +34,10 @@ final class PopoverVisualQATests: XCTestCase {
             ["초기화 쿠폰 2개", "초기화 쿠폰 0개", nil]
         )
         XCTAssertEqual(
+            couponModel.claudeQuotaRows.map { $0.resetCoupon?.countText },
+            ["쿠폰 1개", "쿠폰 1개", nil, nil]
+        )
+        XCTAssertEqual(
             model(for: commonUnconfiguredSnapshot()).openRouterBalance.status,
             .notConfigured
         )
@@ -129,7 +133,7 @@ final class PopoverVisualQATests: XCTestCase {
                         fiveHour: [72, 21, 9, 0][index],
                         weekly: [84, 64, 18, 4][index],
                         fable: index == 0 ? 43 : nil,
-                        couponCount: nil
+                        couponCount: [1, 1, 0, nil][index]
                     ))
                 )
             },
@@ -222,7 +226,10 @@ final class PopoverVisualQATests: XCTestCase {
                     windowDuration: QuotaWindowKind.fableWeekly.duration
                 )
             },
-            rateLimitResetCreditsAvailableCount: couponCount
+            rateLimitResetCreditsAvailableCount: couponCount,
+            rateLimitResetCreditsExpireAt: couponCount.map { _ in
+                capturedAt.addingTimeInterval(26 * 24 * 60 * 60)
+            }
         )
     }
 

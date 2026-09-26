@@ -278,6 +278,7 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
     public let emailAddress: String?
     public let fiveHour: QuotaWindowPresentation
     public let weekly: QuotaWindowPresentation
+    public let resetCoupon: ResetCouponPresentation?
     public let freshnessText: String
     public let isActive: Bool
 
@@ -288,13 +289,24 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
     public var accessibilityLabel: String {
         let active = isActive ? ", 사용 중" : ""
         let email = emailAddress.map { ", \($0)" } ?? ""
+        let coupon = resetCoupon.map { ", \($0.accessibilityText)" } ?? ""
         return "\(name)\(email)\(active), \(freshnessText), "
             + "5시간 \(fiveHour.remaining)\(resetSuffix(fiveHour)), "
-            + "주간 \(weekly.remaining)\(resetSuffix(weekly))"
+            + "주간 \(weekly.remaining)\(resetSuffix(weekly))\(coupon)"
     }
 
     private func resetSuffix(_ window: QuotaWindowPresentation) -> String {
         window.reset == "--" ? "" : " \(window.reset)"
+    }
+}
+
+/// A Claude limit-reset credit the account still holds, with the deadline for using it.
+public struct ResetCouponPresentation: Equatable, Sendable {
+    public let countText: String
+    public let expiryText: String?
+
+    public var accessibilityText: String {
+        "초기화 \(countText)" + (expiryText.map { ", \($0) 사용" } ?? "")
     }
 }
 
@@ -315,6 +327,8 @@ public final class AppViewModel: ObservableObject {
     @Published public private(set) var claudeFiveHour: QuotaWindowPresentation
     @Published public private(set) var claudeWeekly: QuotaWindowPresentation
     @Published public private(set) var claudeFableWeekly: QuotaWindowPresentation
+    /// The signed-in account's reset credit, shown when there are no saved account rows to carry it.
+    @Published public private(set) var claudeResetCoupon: ResetCouponPresentation?
     @Published public private(set) var codexWeekly: QuotaWindowPresentation
     @Published public private(set) var codexQuotaRows: [CodexProfileQuotaPresentation] = []
     @Published public private(set) var claudeQuotaRows: [ClaudeProfileQuotaPresentation] = []
@@ -326,6 +340,9 @@ public final class AppViewModel: ObservableObject {
     @Published public private(set) var selectedCodexProfileID: String?
     @Published public private(set) var activeCodexProfileName = "활성 프로필 없음"
     @Published public private(set) var lastRefreshText = "마지막 새로고침 시각 없음"
+    @Published public private(set) var lastRefreshAt: Date?
+    /// The link a phone on the same tailnet opens to see this usage; nil while the server is off.
+    @Published public private(set) var mobileLink: URL?
     @Published public private(set) var statusText = "새로고침 대기 중"
     @Published public private(set) var errorText: String?
     @Published public private(set) var isRefreshing = false
@@ -348,6 +365,7 @@ public final class AppViewModel: ObservableObject {
     private let reopenCodexSignInAction: @Sendable () -> Bool
     private let cancelCodexSignInAction: @Sendable () -> Void
     private let dateFormatter: DateFormatter
+    private let couponExpiryFormatter: DateFormatter
     private let now: @Sendable () -> Date
     private var observationTask: Task<Void, Never>?
     private var loginObservationTask: Task<Void, Never>?
@@ -381,6 +399,12 @@ public final class AppViewModel: ObservableObject {
         formatter.dateFormat = "M월 d일 a h:mm"
         dateFormatter = formatter
 
+        let expiryFormatter = DateFormatter()
+        expiryFormatter.locale = locale
+        expiryFormatter.timeZone = timeZone
+        expiryFormatter.dateFormat = "M/d"
+        couponExpiryFormatter = expiryFormatter
+
         claudeFiveHour = Self.unavailableWindow(service: "Claude", window: "5시간")
         claudeWeekly = Self.unavailableWindow(service: "Claude", window: "주간")
         claudeFableWeekly = Self.unavailableWindow(service: "Claude", window: "Fable 주간")
@@ -407,6 +431,10 @@ public final class AppViewModel: ObservableObject {
         loginObservationTask?.cancel()
         loginObservationTask = nil
         await coordinator.stop()
+    }
+
+    public func setMobileLink(_ link: URL?) {
+        mobileLink = link
     }
 
     public func refreshNow() async {
@@ -713,6 +741,7 @@ public final class AppViewModel: ObservableObject {
             window: "Fable 주간",
             value: claudeSnapshot?.fableWeekly
         )
+        claudeResetCoupon = resetCoupon(from: claudeSnapshot)
         codexWeekly = presentation(
             service: "Codex",
             window: "주간",
@@ -726,6 +755,7 @@ public final class AppViewModel: ObservableObject {
             codexSnapshot?.capturedAt,
             openRouterSnapshot?.capturedAt,
         ].compactMap { $0 }
+        lastRefreshAt = capturedDates.max()
         if let lastRefresh = capturedDates.max() {
             lastRefreshText = "\(dateFormatter.string(from: lastRefresh)) 새로고침"
         } else {
@@ -784,6 +814,7 @@ public final class AppViewModel: ObservableObject {
                     window: "주간",
                     value: value?.weekly
                 ),
+                resetCoupon: resetCoupon(from: value),
                 freshnessText: freshnessText(for: state),
                 isActive: index == activeIndex
             )
@@ -792,6 +823,20 @@ public final class AppViewModel: ObservableObject {
         activeClaudeProfileName = snapshot.claudeProfiles.first {
             $0.id == snapshot.activeClaudeProfileID
         }?.name ?? "활성 계정 없음"
+    }
+
+    /// Claude reset credits are one-off promotions rather than a recurring allowance, so an
+    /// account that has none (or has used them) shows nothing instead of a zero badge.
+    private func resetCoupon(from snapshot: UsageSnapshot?) -> ResetCouponPresentation? {
+        guard let count = snapshot?.rateLimitResetCreditsAvailableCount, count > 0 else {
+            return nil
+        }
+        return ResetCouponPresentation(
+            countText: "쿠폰 \(count)개",
+            expiryText: snapshot?.rateLimitResetCreditsExpireAt.map {
+                "\(couponExpiryFormatter.string(from: $0))까지"
+            }
+        )
     }
 
     /// Row-sized variant: the account list has no room for a full reset timestamp.
@@ -819,11 +864,13 @@ public final class AppViewModel: ObservableObject {
         claudeFiveHour = Self.unavailableWindow(service: "Claude", window: "5시간")
         claudeWeekly = Self.unavailableWindow(service: "Claude", window: "주간")
         claudeFableWeekly = Self.unavailableWindow(service: "Claude", window: "Fable 주간")
+        claudeResetCoupon = nil
         codexWeekly = Self.unavailableWindow(service: "Codex", window: "주간")
         openRouterBalance = Self.notConfiguredOpenRouter()
         codexQuotaRows = []
         claudeQuotaRows = []
         lastRefreshText = "마지막 새로고침 시각 없음"
+        lastRefreshAt = nil
     }
 
     private func openRouterPresentation(

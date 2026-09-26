@@ -10,6 +10,8 @@ public struct UsageSnapshot: Equatable, Sendable {
     public let weekly: QuotaWindow?
     public let fableWeekly: QuotaWindow?
     public let rateLimitResetCreditsAvailableCount: Int?
+    /// When the soonest-expiring reset credit lapses; nil when the provider reports no deadline.
+    public let rateLimitResetCreditsExpireAt: Date?
     public let warnings: [UsageWarning]
 
     public init(
@@ -18,6 +20,7 @@ public struct UsageSnapshot: Equatable, Sendable {
         weekly: QuotaWindow? = nil,
         fableWeekly: QuotaWindow? = nil,
         rateLimitResetCreditsAvailableCount: Int? = nil,
+        rateLimitResetCreditsExpireAt: Date? = nil,
         warnings: [UsageWarning] = []
     ) {
         self.capturedAt = capturedAt
@@ -25,6 +28,7 @@ public struct UsageSnapshot: Equatable, Sendable {
         self.weekly = weekly
         self.fableWeekly = fableWeekly
         self.rateLimitResetCreditsAvailableCount = rateLimitResetCreditsAvailableCount
+        self.rateLimitResetCreditsExpireAt = rateLimitResetCreditsExpireAt
         self.warnings = warnings
     }
 }

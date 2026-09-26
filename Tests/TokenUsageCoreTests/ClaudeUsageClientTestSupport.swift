@@ -155,12 +155,14 @@ struct RecordedRequest: Sendable {
     let url: String?
     let method: String?
     let anthropicBeta: String?
+    let userAgent: String?
     let hasBearerAuthorization: Bool
 
     init(_ request: URLRequest) {
         url = request.url?.absoluteString
         method = request.httpMethod
         anthropicBeta = request.value(forHTTPHeaderField: "anthropic-beta")
+        userAgent = request.value(forHTTPHeaderField: "User-Agent")
         hasBearerAuthorization = request.value(forHTTPHeaderField: "Authorization")?
             .hasPrefix("Bearer ") == true
     }

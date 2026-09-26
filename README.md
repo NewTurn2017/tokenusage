@@ -2,8 +2,8 @@
 
 ## 다운로드와 설치
 
-[v0.1.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.1.0)에서
-`TokenUsage-0.1.0-macos-universal.zip`을 받아 압축을 풀고,
+[v0.2.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.2.0)에서
+`TokenUsage-0.2.0-macos-universal.zip`을 받아 압축을 풀고,
 `Token Usage.app`을 응용 프로그램 폴더로 옮겨 실행하세요.
 Apple Silicon과 Intel용 실행 파일을 함께 포함하며 macOS 14 이상이 필요합니다.
 서비스별 로그인 요구 사항은 아래를 참고하세요.
@@ -64,7 +64,7 @@ swift test
 
 ## 현재 배포 상태
 
-v0.1.0 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티켓 동봉을 완료했습니다. 압축 해제한 앱의 Gatekeeper 승인도 확인했습니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 로컬 테스트용 ad hoc 서명을 사용하므로, 직접 빌드한 앱과 공증된 다운로드 파일은 구분해야 합니다.
+v0.2.0 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티켓 동봉을 완료했습니다. 압축 해제한 앱의 Gatekeeper 승인도 확인했습니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 로컬 테스트용 ad hoc 서명을 사용하므로, 직접 빌드한 앱과 공증된 다운로드 파일은 구분해야 합니다.
 
 자동 업데이트 기능은 현재 코드에서 확인되지 않았습니다. 따라서 자동 업데이트를 제공하지 않습니다.
 
@@ -72,9 +72,21 @@ v0.1.0 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티�
 
 Codex의 `account/rateLimits/read` 응답에 `rateLimitResetCredits.availableCount` 값이 있을 때만 프로필 행에 **초기화 쿠폰** 개수를 표시합니다. 이 기능은 개수를 읽어 보여 주는 읽기 전용 기능이며, 쿠폰을 사용하거나 충전하지 않습니다. 값이 없으면 표시하지 않습니다.
 
+Claude는 사용량 조회 요청에 `cedar_ember=1`을 붙여 받은 한도 초기화 쿠폰(`/limit-reset`)의 남은 개수와 가장 빠른 사용 기한을 계정 행에 표시합니다. 서버가 Claude Code CLI에만 쿠폰을 알려 주므로 이 요청은 Claude Code의 User-Agent를 보냅니다. 비공개 필드라 형식이 바뀌면 쿠폰만 숨기고 사용량은 그대로 표시하며, 남은 쿠폰이 0개면 배지를 표시하지 않습니다.
+
+## 휴대폰에서 보기
+
+Mac이 Tailscale에 연결되어 있으면 앱이 그 Tailscale 주소(100.64.0.0/10)의 8787 포트에서만 읽기 전용 페이지를 엽니다. 팝오버의 **휴대폰 링크 복사**로 받은 링크를 같은 tailnet의 휴대폰에서 열면 됩니다.
+
+* `/`: 모바일 페이지. 60초마다, 그리고 앱으로 돌아올 때마다 새로 읽습니다. Safari의 홈 화면에 추가해 앱처럼 쓸 수 있습니다.
+* `/usage.json`: 페이지와 위젯이 읽는 JSON. 남은 비율, 초기화 시각, 쿠폰, 마지막 새로고침 시각만 담고 토큰, 이메일, 프로필 ID는 넣지 않습니다.
+* `/widget.js`: [Scriptable](https://scriptable.app)용 위젯 코드. 이 Mac의 주소와 키가 들어 있으니 Scriptable 새 스크립트에 붙여 넣고 홈 화면이나 잠금 화면 위젯으로 추가합니다.
+
+모든 경로는 키체인에 저장된 접근 키(`?k=` 또는 `Authorization: Bearer`)를 요구합니다. 포트는 `TOKEN_USAGE_MOBILE_PORT`로 바꿀 수 있고 `0`이면 서버를 끕니다. Tailscale 특성상 Mac 자신에서 자기 Tailscale 주소로는 연결되지 않으니 확인은 다른 기기에서 하세요.
+
 ## 개인정보와 네트워크 요약
 
-앱은 계정 인증 정보와 사용량을 로컬에서 읽고, 위에 적은 각 제공자의 엔드포인트 또는 로컬 Codex CLI에만 조회를 보냅니다. 이 저장소의 코드만으로 제공자의 보존 기간, 네트워크 로그, 제3자 처리 여부까지 보장할 수는 없습니다.
+앱은 계정 인증 정보와 사용량을 로컬에서 읽고, 위에 적은 각 제공자의 엔드포인트 또는 로컬 Codex CLI에만 조회를 보냅니다. 휴대폰 보기를 위해 Tailscale 주소에서만 요청을 받으며, 접근 키 없이 들어온 요청에는 사용량을 주지 않습니다. 이 저장소의 코드만으로 제공자의 보존 기간, 네트워크 로그, 제3자 처리 여부까지 보장할 수는 없습니다.
 
 ## 라이선스
 

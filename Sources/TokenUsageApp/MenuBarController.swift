@@ -847,6 +847,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     private var outsideClickMonitor: Any?
     private let model: AppViewModel
     private let loginAttemptController: CodexLoginAttemptController?
+    private let mobileAccess: MobileAccessController?
     private let removeStatusItem: @MainActor (NSStatusItem) -> Void
     private var cancellables: Set<AnyCancellable> = []
     private var started = false
@@ -855,6 +856,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         model: AppViewModel,
         statusItem: NSStatusItem,
         loginAttemptController: CodexLoginAttemptController? = nil,
+        mobileAccess: MobileAccessController? = nil,
         removeStatusItem: @escaping @MainActor (NSStatusItem) -> Void = {
             NSStatusBar.system.removeStatusItem($0)
         }
@@ -862,6 +864,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         self.model = model
         self.statusItem = statusItem
         self.loginAttemptController = loginAttemptController
+        self.mobileAccess = mobileAccess
         self.removeStatusItem = removeStatusItem
         statusView = StatusItemView(presentation: model.statusItemPresentation)
         super.init()
@@ -954,8 +957,25 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         return MenuBarController(
             model: model,
             statusItem: NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength),
-            loginAttemptController: loginAttemptController
+            loginAttemptController: loginAttemptController,
+            mobileAccess: mobileAccessPort(environment: environment).map {
+                MobileAccessController(
+                    model: model,
+                    port: $0,
+                    keyFileURL: codexDependencies.applicationSupportDirectory
+                        .appendingPathComponent("TokenUsage/mobile-access-key", isDirectory: false)
+                )
+            }
         )
+    }
+
+    /// `TOKEN_USAGE_MOBILE_PORT` overrides the phone server's port; `0` turns the server off.
+    static func mobileAccessPort(environment: [String: String]) -> UInt16? {
+        guard let value = environment["TOKEN_USAGE_MOBILE_PORT"] else {
+            return MobileAccessController.defaultPort
+        }
+        guard let port = UInt16(value), port != 0 else { return nil }
+        return port
     }
 
     /// `~/.claude.json`, honouring `CLAUDE_CONFIG_DIR` the same way the CLI does.
@@ -1006,11 +1026,13 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         guard !started else { return }
         started = true
         model.start()
+        mobileAccess?.start()
     }
 
     func stop() async {
         guard started else { return }
         started = false
+        mobileAccess?.stop()
         closePopover()
         cancellables.removeAll()
         await model.stop()

@@ -76,6 +76,49 @@ final class UsageSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.fableWeekly?.resetsAt, Date(timeIntervalSince1970: 1_786_320_000.5))
     }
 
+    func testClaudeResetCreditsSumRemainingGrantsAndKeepTheSoonestDeadline() throws {
+        let snapshot = try ClaudeUsageDecoder().decode(
+            jsonData(
+                """
+                {"cedar_ember":{"eligible":true,"grants":[
+                  {"id":"a","resets_total":1,"resets_left":1,"ends_at":"2026-10-22T16:00:00+00:00"},
+                  {"id":"b","resets_total":2,"resets_left":2,"ends_at":"2026-10-01T00:00:00Z"},
+                  {"id":"c","resets_total":1,"resets_left":0,"ends_at":"2026-09-23T00:00:00Z"}
+                ]}}
+                """
+            )
+        )
+
+        XCTAssertEqual(snapshot.rateLimitResetCreditsAvailableCount, 3)
+        XCTAssertEqual(snapshot.rateLimitResetCreditsExpireAt, Date(timeIntervalSince1970: 1_790_812_800))
+    }
+
+    func testClaudeResetCreditsAreHiddenWhenIneligibleMissingOrMalformed() throws {
+        let bodies = [
+            #"{"five_hour":{"utilization":10,"resets_at":null}}"#,
+            #"{"five_hour":{"utilization":10,"resets_at":null},"cedar_ember":null}"#,
+            #"{"five_hour":{"utilization":10,"resets_at":null},"cedar_ember":{"eligible":false,"ineligible_reason":"surface","grants":[]}}"#,
+            #"{"five_hour":{"utilization":10,"resets_at":null},"cedar_ember":{"eligible":true,"grants":[{"resets_left":"1"}]}}"#,
+            #"{"five_hour":{"utilization":10,"resets_at":null},"cedar_ember":"unexpected"}"#,
+        ]
+
+        for body in bodies {
+            let snapshot = try ClaudeUsageDecoder().decode(jsonData(body))
+            XCTAssertEqual(snapshot.fiveHour?.remainingPercent, 90, body)
+            XCTAssertNil(snapshot.rateLimitResetCreditsAvailableCount, body)
+            XCTAssertNil(snapshot.rateLimitResetCreditsExpireAt, body)
+        }
+    }
+
+    func testClaudeEligibleAccountWithoutGrantsHasZeroResetCredits() throws {
+        let snapshot = try ClaudeUsageDecoder().decode(
+            jsonData(#"{"cedar_ember":{"eligible":true,"grants":[]}}"#)
+        )
+
+        XCTAssertEqual(snapshot.rateLimitResetCreditsAvailableCount, 0)
+        XCTAssertNil(snapshot.rateLimitResetCreditsExpireAt)
+    }
+
     func testCodexResetCouponCountUsesAuthoritativeAvailableCount() throws {
         let snapshot = try CodexUsageDecoder().decode(
             jsonData(

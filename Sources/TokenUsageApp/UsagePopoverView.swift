@@ -152,6 +152,9 @@ private struct ClaudeQuotaSection: View {
                 ProviderMarkView(mark: .anthropic)
                 Text("Claude")
                     .font(PopoverDesignSystem.Typography.section)
+                if model.claudeQuotaRows.isEmpty, let coupon = model.claudeResetCoupon {
+                    ClaudeCouponBadge(coupon: coupon, accessibilityIdentifier: "claude-reset-coupon")
+                }
                 Spacer(minLength: 0)
                 if !model.claudeProfiles.isEmpty {
                     Picker("계정", selection: profileSelection) {
@@ -247,10 +250,18 @@ private struct ClaudeProfileQuotaRow: View {
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
+                    if let coupon = presentation.resetCoupon {
+                        ClaudeCouponBadge(
+                            coupon: coupon,
+                            accessibilityIdentifier: "claude-reset-coupon-\(presentation.profileID)"
+                        )
+                    }
                     if presentation.isActive {
                         ActiveBadge(provider: .claude)
                     }
+                    // A coupon badge can crowd the header; the name truncates, not the freshness.
                     FreshnessLabel(text: presentation.freshnessText)
+                        .fixedSize()
                 }
                 HStack(alignment: .top, spacing: PopoverDesignSystem.Spacing.medium) {
                     ClaudeWindowSummary(presentation: presentation.fiveHour)
@@ -410,7 +421,8 @@ private struct CodexProfileQuotaRow: View {
                 if let resetCouponText = presentation.resetCouponText {
                     CouponBadge(
                         text: resetCouponText.replacingOccurrences(of: "초기화 ", with: ""),
-                        profileID: presentation.profileID
+                        provider: .codex,
+                        accessibilityIdentifier: "codex-reset-coupon-count-\(presentation.profileID)"
                     )
                 }
             }
@@ -641,24 +653,39 @@ private struct ActiveBadge: View {
 
 private struct CouponBadge: View {
     let text: String
-    let profileID: String
+    let provider: PopoverDesignSystem.Provider
+    let accessibilityIdentifier: String
 
     var body: some View {
         Label(text, systemImage: "ticket.fill")
             .font(PopoverDesignSystem.Typography.detailStrong)
-            .foregroundStyle(PopoverDesignSystem.Provider.codex.accent)
+            .foregroundStyle(provider.accent)
             .padding(.horizontal, PopoverDesignSystem.Spacing.xSmall)
             .padding(.vertical, PopoverDesignSystem.Spacing.xxSmall)
             .background(
                 Capsule().fill(
-                    PopoverDesignSystem.Provider.codex.accent.opacity(
+                    provider.accent.opacity(
                         PopoverDesignSystem.Opacity.badge
                     )
                 )
             )
             .lineLimit(1)
             .fixedSize()
-            .accessibilityIdentifier("codex-reset-coupon-count-\(profileID)")
+            .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+private struct ClaudeCouponBadge: View {
+    let coupon: ResetCouponPresentation
+    let accessibilityIdentifier: String
+
+    var body: some View {
+        CouponBadge(
+            text: [coupon.countText, coupon.expiryText].compactMap { $0 }.joined(separator: " · "),
+            provider: .claude,
+            accessibilityIdentifier: accessibilityIdentifier
+        )
+        .help("Claude Code에서 /limit-reset으로 사용량 한도를 초기화할 수 있습니다")
     }
 }
 
@@ -1041,6 +1068,10 @@ private struct PopoverActions: View {
             .accessibilityIdentifier("refresh-now")
             .disabled(model.isRefreshing)
 
+            if let mobileLink = model.mobileLink {
+                MobileLinkButton(link: mobileLink)
+            }
+
             Spacer(minLength: 0)
 
             Button {
@@ -1052,6 +1083,96 @@ private struct PopoverActions: View {
             .accessibilityIdentifier("quit")
         }
         .controlSize(.small)
+    }
+}
+
+private struct MobileLinkButton: View {
+    let link: URL
+    @State private var isShowingCode = false
+
+    var body: some View {
+        Button {
+            isShowingCode.toggle()
+        } label: {
+            Label("휴대폰으로 보기", systemImage: "qrcode")
+        }
+        .accessibilityIdentifier("show-mobile-link")
+        .popover(isPresented: $isShowingCode, arrowEdge: .bottom) {
+            MobileLinkPanel(link: link)
+        }
+    }
+}
+
+/// The phone link as a QR code: the page to open in Safari, or the Scriptable widget source.
+struct MobileLinkPanel: View {
+    enum Target: String, CaseIterable, Identifiable {
+        case page = "페이지"
+        case widget = "위젯"
+        var id: String { rawValue }
+    }
+
+    let link: URL
+    @State var target: Target = .page
+    @State private var copied = false
+    private static let codeSide: CGFloat = 188
+
+    var body: some View {
+        VStack(spacing: PopoverDesignSystem.Spacing.small) {
+            Picker("보기", selection: $target) {
+                ForEach(Target.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if let image = QRCodeImage.make(from: targetLink.absoluteString, side: Self.codeSide) {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: Self.codeSide, height: Self.codeSide)
+                    .padding(PopoverDesignSystem.Spacing.small)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityLabel("\(target.rawValue) 링크 QR 코드")
+                    .accessibilityIdentifier("mobile-link-qr")
+            }
+
+            Text(caption)
+                .font(PopoverDesignSystem.Typography.detail)
+                .foregroundStyle(PopoverDesignSystem.Palette.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(targetLink.absoluteString, forType: .string)
+                copied = true
+            } label: {
+                Label(copied ? "복사됨" : "링크 복사", systemImage: copied ? "checkmark" : "doc.on.doc")
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("copy-mobile-link")
+        }
+        .padding(PopoverDesignSystem.Spacing.medium)
+        .frame(width: Self.codeSide + 56)
+        .onChange(of: target) { copied = false }
+    }
+
+    var targetLink: URL {
+        guard target == .widget,
+              var components = URLComponents(url: link, resolvingAgainstBaseURL: false)
+        else {
+            return link
+        }
+        components.path = "/widget.js"
+        return components.url ?? link
+    }
+
+    private var caption: String {
+        switch target {
+        case .page:
+            "휴대폰 카메라로 찍어 Safari에서 여세요. 휴대폰에 Tailscale이 켜져 있어야 합니다."
+        case .widget:
+            "열린 코드를 Scriptable 새 스크립트에 붙여 넣고 위젯으로 추가하세요."
+        }
     }
 }
 

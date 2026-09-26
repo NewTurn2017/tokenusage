@@ -78,6 +78,54 @@ final class ClaudeProfilePresentationTests: XCTestCase {
         XCTAssertFalse(model.claudeQuotaRows[1].accessibilityLabel.contains("--"))
     }
 
+    func testEachAccountRowShowsItsResetCouponAndDeadlineButHidesZero() {
+        let model = makeModel()
+        func withCoupons(_ count: Int?, expiresAt: Date?) -> UsageSnapshot {
+            UsageSnapshot(
+                capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                fiveHour: QuotaWindow(remainingPercent: 91, resetsAt: nil),
+                weekly: QuotaWindow(remainingPercent: 2, resetsAt: nil),
+                rateLimitResetCreditsAvailableCount: count,
+                rateLimitResetCreditsExpireAt: expiresAt
+            )
+        }
+        let snapshot = AppUsageSnapshot(
+            claude: .unavailable(message: ""),
+            codexUsage: [],
+            codexProfiles: [],
+            activeCodexProfileID: nil,
+            openRouter: .notConfigured(message: ""),
+            removedCodexProfileNames: [],
+            claudeUsage: [
+                ClaudeProfileUsage(
+                    profileID: "claude-1",
+                    // 2026-10-22T16:00:00Z
+                    state: .fresh(withCoupons(1, expiresAt: Date(timeIntervalSince1970: 1_792_684_800)))
+                ),
+                ClaudeProfileUsage(profileID: "claude-2", state: .fresh(withCoupons(0, expiresAt: nil))),
+                ClaudeProfileUsage(profileID: "claude-3", state: .fresh(withCoupons(nil, expiresAt: nil))),
+            ],
+            claudeProfiles: [
+                ClaudeProfileMetadata(id: "claude-1", name: "personal"),
+                ClaudeProfileMetadata(id: "claude-2", name: "work"),
+                ClaudeProfileMetadata(id: "claude-3", name: "team"),
+            ],
+            activeClaudeProfileID: "claude-1"
+        )
+
+        model.apply(.current(snapshot))
+
+        XCTAssertEqual(
+            model.claudeQuotaRows.map(\.resetCoupon),
+            [ResetCouponPresentation(countText: "쿠폰 1개", expiryText: "10/22까지"), nil, nil]
+        )
+        XCTAssertTrue(
+            model.claudeQuotaRows[0].accessibilityLabel.contains("초기화 쿠폰 1개, 10/22까지 사용"),
+            model.claudeQuotaRows[0].accessibilityLabel
+        )
+        XCTAssertFalse(model.claudeQuotaRows[1].accessibilityLabel.contains("쿠폰"))
+    }
+
     func testTheActiveAccountDrivesTheDetailCards() {
         let model = makeModel()
 
