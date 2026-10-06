@@ -149,6 +149,7 @@ final class OwnedProcess: @unchecked Sendable {
     private let stderr = CapturedProcessStream()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
+    private let exitSignal = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var started = false
     private var terminationRequested = false
@@ -161,6 +162,9 @@ final class OwnedProcess: @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        process.terminationHandler = { [exitSignal] _ in
+            exitSignal.signal()
+        }
     }
 
     func start() throws {
@@ -179,12 +183,14 @@ final class OwnedProcess: @unchecked Sendable {
     }
 
     func waitUntilExit() async -> Int32 {
-        await Task.detached(priority: .userInitiated) { [process, stdout, stderr] in
-            process.waitUntilExit()
-            stdout.waitUntilFinished()
-            stderr.waitUntilFinished()
-            return process.terminationStatus
-        }.value
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [process, stdout, stderr, exitSignal] in
+                exitSignal.wait()
+                stdout.waitUntilFinished()
+                stderr.waitUntilFinished()
+                continuation.resume(returning: process.terminationStatus)
+            }
+        }
     }
 
     func terminate() {
