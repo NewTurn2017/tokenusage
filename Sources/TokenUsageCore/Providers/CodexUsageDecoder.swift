@@ -11,12 +11,14 @@ public struct CodexUsageDecoder: Sendable {
             return UsageSnapshot(capturedAt: capturedAt)
         }
         let resetCreditCount = try decodeResetCreditCount(result["rateLimitResetCredits"])
+        let credits = try decodeCredits(in: result)
 
         if let window = try decodeWeeklyWindow(in: result["rateLimits"], path: "result.rateLimits") {
             return UsageSnapshot(
                 capturedAt: capturedAt,
                 weekly: window.window,
                 rateLimitResetCreditsAvailableCount: resetCreditCount,
+                codexCredits: credits,
                 warnings: warningArray(window.warning)
             )
         }
@@ -29,14 +31,61 @@ public struct CodexUsageDecoder: Sendable {
                 capturedAt: capturedAt,
                 weekly: window.window,
                 rateLimitResetCreditsAvailableCount: resetCreditCount,
+                codexCredits: credits,
                 warnings: warningArray(window.warning)
             )
         }
 
         return UsageSnapshot(
             capturedAt: capturedAt,
-            rateLimitResetCreditsAvailableCount: resetCreditCount
+            rateLimitResetCreditsAvailableCount: resetCreditCount,
+            codexCredits: credits
         )
+    }
+
+    private func decodeCredits(in result: [String: Any]) throws -> CodexCredits? {
+        let limits = try UsageDecoderSupport.optionalObject(
+            result["rateLimits"], path: "result.rateLimits"
+        )
+        if let credits = try decodeCredits(limits?["credits"], path: "result.rateLimits.credits") {
+            return credits
+        }
+        let map = try UsageDecoderSupport.optionalObject(
+            result["rateLimitsByLimitId"], path: "result.rateLimitsByLimitId"
+        )
+        // Other model buckets are not the account's Codex credit balance.
+        guard let key = map?.keys.sorted().first(where: {
+            $0.caseInsensitiveCompare("codex") == .orderedSame
+        }) else { return nil }
+        let codexLimits = try UsageDecoderSupport.optionalObject(
+            map?[key], path: "result.rateLimitsByLimitId.\(key)"
+        )
+        return try decodeCredits(
+            codexLimits?["credits"], path: "result.rateLimitsByLimitId.\(key).credits"
+        )
+    }
+
+    private func decodeCredits(_ value: Any?, path: String) throws -> CodexCredits? {
+        guard let credits = try UsageDecoderSupport.optionalObject(value, path: path) else {
+            return nil
+        }
+        guard let hasCredits = credits["hasCredits"] as? Bool else {
+            throw UsageDecodingError.invalidType(path: "\(path).hasCredits")
+        }
+        guard let unlimited = credits["unlimited"] as? Bool else {
+            throw UsageDecodingError.invalidType(path: "\(path).unlimited")
+        }
+        let rawBalance = try UsageDecoderSupport.optionalString(
+            credits["balance"], path: "\(path).balance"
+        )
+        var balance: Double?
+        if let rawBalance {
+            guard let number = Double(rawBalance), number.isFinite, number >= 0 else {
+                throw UsageDecodingError.invalidType(path: "\(path).balance")
+            }
+            balance = number
+        }
+        return CodexCredits(hasCredits: hasCredits, unlimited: unlimited, balance: balance)
     }
 
     private func decodeResetCreditCount(_ value: Any?) throws -> Int? {

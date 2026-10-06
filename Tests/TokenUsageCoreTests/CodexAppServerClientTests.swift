@@ -76,10 +76,10 @@ final class CodexAppServerClientTests: XCTestCase {
 
     func testHomeSpecificUsageKeepsConcurrentReadsIsolated() async throws {
         let firstFixture = try CodexAppServerFixture(response: """
-        {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"windowDurationMins":10080,"resetsAt":1776038400},"secondary":null}}}
+        {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"windowDurationMins":10080,"resetsAt":1776038400},"secondary":null,"credits":{"hasCredits":true,"unlimited":false,"balance":"125.5"}}}}
         """)
         let secondFixture = try CodexAppServerFixture(response: """
-        {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"primary":{"usedPercent":64,"windowDurationMins":10080,"resetsAt":1776038500},"secondary":null}}}
+        {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"primary":{"usedPercent":64,"windowDurationMins":10080,"resetsAt":1776038500},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":"0"}}}}
         """)
         defer {
             firstFixture.remove()
@@ -98,6 +98,8 @@ final class CodexAppServerClientTests: XCTestCase {
 
         XCTAssertEqual(firstUsage.weekly?.remainingPercent, 79)
         XCTAssertEqual(secondUsage.weekly?.remainingPercent, 36)
+        XCTAssertEqual(firstUsage.codexCredits?.balance, 125.5)
+        XCTAssertEqual(secondUsage.codexCredits?.balance, 0)
         XCTAssertEqual(try firstFixture.capturedCodexHomes(), [firstHome.path])
         XCTAssertEqual(try secondFixture.capturedCodexHomes(), [secondHome.path])
         let firstReaped = assertProcessAbsent(try firstFixture.processID())

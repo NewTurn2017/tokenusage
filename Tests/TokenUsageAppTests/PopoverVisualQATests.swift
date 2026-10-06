@@ -16,8 +16,23 @@ final class PopoverVisualQATests: XCTestCase {
         let dark = try render(snapshot: manyAccountSnapshot(), appearance: darkAqua)
         let common = try render(snapshot: commonUnconfiguredSnapshot(), appearance: aqua)
         let errors = try render(snapshot: errorSnapshot(), appearance: darkAqua)
+        let populated = manyAccountSnapshot()
+        let lastProfiles = Array(populated.codexProfiles.suffix(3))
+        let lastIDs = Set(lastProfiles.map(\.id))
+        let lastAccounts = AppUsageSnapshot(
+            claude: populated.claude,
+            codexUsage: populated.codexUsage.filter { lastIDs.contains($0.profileID) },
+            codexProfiles: lastProfiles,
+            activeCodexProfileID: lastProfiles.last?.id,
+            openRouter: populated.openRouter,
+            claudeUsage: populated.claudeUsage,
+            claudeProfiles: populated.claudeProfiles,
+            activeClaudeProfileID: populated.activeClaudeProfileID
+        )
+        let lastLight = try render(snapshot: lastAccounts, appearance: aqua)
+        let lastDark = try render(snapshot: lastAccounts, appearance: darkAqua)
 
-        for rendering in [light, dark, common, errors] {
+        for rendering in [light, dark, common, errors, lastLight, lastDark] {
             XCTAssertEqual(
                 rendering.size.width,
                 PopoverDesignSystem.Size.popoverWidth,
@@ -69,6 +84,14 @@ final class PopoverVisualQATests: XCTestCase {
                 to: output.appendingPathComponent("tokenusage-popover-dark-errors.png"),
                 options: .atomic
             )
+            try lastLight.png.write(
+                to: output.appendingPathComponent("tokenusage-popover-light-last-accounts.png"),
+                options: .atomic
+            )
+            try lastDark.png.write(
+                to: output.appendingPathComponent("tokenusage-popover-dark-last-accounts.png"),
+                options: .atomic
+            )
         }
 
         print(
@@ -101,6 +124,13 @@ final class PopoverVisualQATests: XCTestCase {
         }
         let codexRemaining: [Double] = [88, 24, 8, 0, 51]
         let couponCounts: [Int?] = [2, 0, nil, 1, nil]
+        let credits: [CodexCredits?] = [
+            CodexCredits(hasCredits: true, unlimited: false, balance: 52771.115598),
+            CodexCredits(hasCredits: false, unlimited: false, balance: 0),
+            CodexCredits(hasCredits: false, unlimited: true),
+            CodexCredits(hasCredits: true, unlimited: false),
+            nil,
+        ]
 
         return AppUsageSnapshot(
             claude: .unavailable(message: "synthetic"),
@@ -111,7 +141,8 @@ final class PopoverVisualQATests: XCTestCase {
                         fiveHour: nil,
                         weekly: codexRemaining[index],
                         fable: nil,
-                        couponCount: couponCounts[index]
+                        couponCount: couponCounts[index],
+                        credits: credits[index]
                     ))
                 )
             },
@@ -165,7 +196,8 @@ final class PopoverVisualQATests: XCTestCase {
             fiveHour: 13,
             weekly: 7,
             fable: 0,
-            couponCount: nil
+            couponCount: nil,
+            credits: CodexCredits(hasCredits: true, unlimited: false, balance: 125.5)
         )
         let codexProfiles = [
             CodexProfileMetadata(id: "stale", name: "Stale team account"),
@@ -189,7 +221,8 @@ final class PopoverVisualQATests: XCTestCase {
                         fiveHour: nil,
                         weekly: 74,
                         fable: nil,
-                        couponCount: 0
+                        couponCount: 0,
+                        credits: CodexCredits(hasCredits: true, unlimited: false)
                     ))
                 ),
             ],
@@ -203,7 +236,8 @@ final class PopoverVisualQATests: XCTestCase {
         fiveHour: Double?,
         weekly: Double,
         fable: Double?,
-        couponCount: Int?
+        couponCount: Int?,
+        credits: CodexCredits? = nil
     ) -> UsageSnapshot {
         UsageSnapshot(
             capturedAt: capturedAt,
@@ -229,7 +263,8 @@ final class PopoverVisualQATests: XCTestCase {
             rateLimitResetCreditsAvailableCount: couponCount,
             rateLimitResetCreditsExpireAt: couponCount.map { _ in
                 capturedAt.addingTimeInterval(26 * 24 * 60 * 60)
-            }
+            },
+            codexCredits: credits
         )
     }
 

@@ -18,7 +18,7 @@ enum PopoverDesignSystem {
         static let actionIcon: CGFloat = 12
         static let compactProgressWidth: CGFloat = 72
         static let claudeAccountRowHeight: CGFloat = 70
-        static let codexAccountRowHeight: CGFloat = 54
+        static let codexAccountRowHeight: CGFloat = 62
     }
 
     enum Radius {

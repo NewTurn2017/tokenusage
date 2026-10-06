@@ -438,6 +438,16 @@ private struct CodexProfileQuotaRow: View {
             }
             .font(PopoverDesignSystem.Typography.detail)
             .foregroundStyle(PopoverDesignSystem.Palette.secondary)
+            HStack(spacing: PopoverDesignSystem.Spacing.small) {
+                Text("추가 크레딧")
+                Spacer(minLength: 0)
+                Text(presentation.additionalCreditsText)
+                    .monospacedDigit()
+            }
+            .font(PopoverDesignSystem.Typography.detail)
+            .foregroundStyle(PopoverDesignSystem.Palette.secondary)
+            .lineLimit(1)
+            .accessibilityIdentifier("codex-additional-credits-\(presentation.profileID)")
         }
         .padding(.horizontal, PopoverDesignSystem.Spacing.small)
         .padding(.vertical, PopoverDesignSystem.Spacing.xSmall)

@@ -255,6 +255,7 @@ public struct CodexProfileQuotaPresentation: Identifiable, Equatable, Sendable {
     public let name: String
     public let quota: QuotaWindowPresentation
     public let resetCouponText: String?
+    public let additionalCreditsText: String
     public let freshnessText: String
     public let isActive: Bool
 
@@ -267,7 +268,8 @@ public struct CodexProfileQuotaPresentation: Identifiable, Equatable, Sendable {
         let pace = quota.paceText.map { ", 사용 속도 \($0)" } ?? ""
         let resetCoupon = resetCouponText.map { ", \($0)" } ?? ""
         return "\(name), 프로필 ID \(profileID)\(active), \(freshnessText), "
-            + "\(quota.remaining), \(quota.reset)\(pace)\(resetCoupon)"
+            + "\(quota.remaining), \(quota.reset)\(pace)\(resetCoupon), "
+            + "추가 크레딧 \(additionalCreditsText)"
     }
 }
 
@@ -366,6 +368,7 @@ public final class AppViewModel: ObservableObject {
     private let cancelCodexSignInAction: @Sendable () -> Void
     private let dateFormatter: DateFormatter
     private let couponExpiryFormatter: DateFormatter
+    private let creditFormatter: NumberFormatter
     private let now: @Sendable () -> Date
     private var observationTask: Task<Void, Never>?
     private var loginObservationTask: Task<Void, Never>?
@@ -404,6 +407,12 @@ public final class AppViewModel: ObservableObject {
         expiryFormatter.timeZone = timeZone
         expiryFormatter.dateFormat = "M/d"
         couponExpiryFormatter = expiryFormatter
+
+        let creditFormatter = NumberFormatter()
+        creditFormatter.locale = locale
+        creditFormatter.numberStyle = .decimal
+        creditFormatter.maximumFractionDigits = 2
+        self.creditFormatter = creditFormatter
 
         claudeFiveHour = Self.unavailableWindow(service: "Claude", window: "5시간")
         claudeWeekly = Self.unavailableWindow(service: "Claude", window: "주간")
@@ -715,6 +724,7 @@ public final class AppViewModel: ObservableObject {
                 resetCouponText: usage?.rateLimitResetCreditsAvailableCount.map {
                     "초기화 쿠폰 \($0)개"
                 },
+                additionalCreditsText: additionalCreditsText(from: usage?.codexCredits),
                 freshnessText: freshnessText(for: state),
                 isActive: index == activeIndex
             )
@@ -928,6 +938,15 @@ public final class AppViewModel: ObservableObject {
 
     private func currency(_ value: Double) -> String {
         String(format: "$%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    private func additionalCreditsText(from credits: CodexCredits?) -> String {
+        guard let credits else { return "--" }
+        if credits.unlimited { return "무제한" }
+        if let balance = credits.balance {
+            return "\(creditFormatter.string(from: NSNumber(value: balance)) ?? "--") 남음"
+        }
+        return credits.hasCredits ? "잔액 미제공" : "0 남음"
     }
 
     private func usageSnapshot(from state: UsageState) -> UsageSnapshot? {

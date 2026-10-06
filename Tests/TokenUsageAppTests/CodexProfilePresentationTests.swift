@@ -109,6 +109,46 @@ final class CodexProfilePresentationTests: XCTestCase {
         print("TASK6_QA invalid_active codex_metric=-- active_count=0")
     }
 
+    func testAdditionalCreditsStayWithEachAccountIncludingStaleAndUnavailableStates() {
+        let credits: [CodexCredits?] = [
+            CodexCredits(hasCredits: true, unlimited: false, balance: 52771.115598),
+            CodexCredits(hasCredits: false, unlimited: false, balance: 0),
+            CodexCredits(hasCredits: false, unlimited: true),
+            CodexCredits(hasCredits: true, unlimited: false),
+            nil,
+            CodexCredits(hasCredits: true, unlimited: false, balance: 125.5),
+            nil,
+        ]
+        let profiles = credits.indices.map {
+            CodexProfileMetadata(id: "credits-\($0)", name: "Account \($0)")
+        }
+        let model = makeModel()
+        model.apply(.current(AppUsageSnapshot(
+            claude: .unavailable(message: "synthetic"),
+            codexUsage: credits.enumerated().map { index, credit in
+                let snapshot = UsageSnapshot(
+                    capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    codexCredits: credit
+                )
+                let state: UsageState = index == 6
+                    ? .unavailable(message: "synthetic")
+                    : index == 5
+                        ? .stale(lastGood: snapshot, message: "synthetic")
+                        : .fresh(snapshot)
+                return usage(profiles[index].id, state)
+            },
+            codexProfiles: profiles,
+            activeCodexProfileID: profiles.first?.id
+        )))
+
+        XCTAssertEqual(model.codexQuotaRows.map(\.additionalCreditsText), [
+            "52,771.12 남음", "0 남음", "무제한", "잔액 미제공", "--", "125.5 남음", "--",
+        ])
+        XCTAssertEqual(model.codexQuotaRows[5].freshnessText, "이전 값")
+        XCTAssertEqual(model.codexQuotaRows[6].freshnessText, "조회 실패")
+        XCTAssertTrue(model.codexQuotaRows[0].accessibilityLabel.contains("추가 크레딧 52,771.12"))
+    }
+
     func testOffscreenFiveProfileSurfaceRendersBoundedScrollCards() throws {
         let profiles = (1...5).map { CodexProfileMetadata(id: "p\($0)", name: "P\($0)") }
         let model = makeModel()
@@ -138,7 +178,7 @@ final class CodexProfilePresentationTests: XCTestCase {
         canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
 
-        XCTAssertEqual(CodexProfileQuotaListLayout.maximumHeight(rowCount: 3), 166)
+        XCTAssertEqual(CodexProfileQuotaListLayout.maximumHeight(rowCount: 3), 190)
         XCTAssertLessThan(
             CodexProfileQuotaListLayout.maximumHeight(rowCount: 3),
             view.bounds.height
@@ -156,7 +196,8 @@ final class CodexProfilePresentationTests: XCTestCase {
     private func makeModel() -> AppViewModel {
         AppViewModel(
             coordinator: PresentationNoopCoordinator(),
-            profileActions: PresentationNoopActions()
+            profileActions: PresentationNoopActions(),
+            locale: Locale(identifier: "en_US")
         )
     }
 

@@ -137,6 +137,73 @@ final class UsageSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.rateLimitResetCreditsAvailableCount, 4)
     }
 
+    func testCodexAdditionalCreditsAreIndependentOfWeeklyQuotaAndResetCoupons() throws {
+        let snapshot = try CodexUsageDecoder().decode(jsonData("""
+        {"result":{
+          "rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":10080},
+            "credits":{"hasCredits":true,"unlimited":false,"balance":"52771.1155980000"}},
+          "rateLimitResetCredits":{"availableCount":0}
+        }}
+        """))
+
+        XCTAssertEqual(snapshot.codexCredits, CodexCredits(
+            hasCredits: true, unlimited: false, balance: 52771.115598
+        ))
+        XCTAssertEqual(snapshot.weekly?.remainingPercent, 0)
+        XCTAssertEqual(snapshot.rateLimitResetCreditsAvailableCount, 0)
+    }
+
+    func testCodexAdditionalCreditsPreserveZeroUnlimitedHiddenAndMissingBalances() throws {
+        for (payload, expected) in [
+            (#"{"hasCredits":false,"unlimited":false,"balance":"0"}"#,
+             CodexCredits(hasCredits: false, unlimited: false, balance: 0)),
+            (#"{"hasCredits":false,"unlimited":true,"balance":null}"#,
+             CodexCredits(hasCredits: false, unlimited: true)),
+            (#"{"hasCredits":true,"unlimited":false,"balance":null}"#,
+             CodexCredits(hasCredits: true, unlimited: false)),
+        ] {
+            let snapshot = try CodexUsageDecoder().decode(jsonData(
+                #"{"result":{"rateLimits":{"credits":\#(payload)}}}"#
+            ))
+            XCTAssertEqual(snapshot.codexCredits, expected)
+            XCTAssertNil(snapshot.weekly)
+        }
+        for payload in [#"{"result":{}}"#, #"{"result":{"rateLimits":{"credits":null}}}"#] {
+            XCTAssertNil(try CodexUsageDecoder().decode(jsonData(payload)).codexCredits)
+        }
+    }
+
+    func testCodexAdditionalCreditsPreferDirectBalanceThenOnlyCodexMapBucket() throws {
+        let map = """
+        "rateLimitsByLimitId":{
+          "other":{"credits":{"hasCredits":true,"unlimited":false,"balance":"999"}},
+          "codex":{"credits":{"hasCredits":true,"unlimited":false,"balance":"42.5"}}
+        }
+        """
+        let mapped = try CodexUsageDecoder().decode(jsonData(
+            #"{"result":{"rateLimits":{"credits":null},\#(map)}}"#
+        ))
+        let direct = try CodexUsageDecoder().decode(jsonData(
+            #"{"result":{"rateLimits":{"credits":{"hasCredits":false,"unlimited":false,"balance":"0"}},\#(map)}}"#
+        ))
+        let unrelated = try CodexUsageDecoder().decode(jsonData("""
+        {"result":{"rateLimitsByLimitId":{
+          "other":{"credits":{"hasCredits":true,"unlimited":false,"balance":"999"}}
+        }}}
+        """))
+        XCTAssertEqual(mapped.codexCredits?.balance, 42.5)
+        XCTAssertEqual(direct.codexCredits?.balance, 0)
+        XCTAssertNil(unrelated.codexCredits)
+    }
+
+    func testCodexRejectsMalformedAdditionalCreditBalances() {
+        for balance in [#""NaN""#, #""inf""#, #""-1""#, #""bad""#, "12", "true"] {
+            XCTAssertThrowsError(try CodexUsageDecoder().decode(jsonData(
+                #"{"result":{"rateLimits":{"credits":{"hasCredits":true,"unlimited":false,"balance":\#(balance)}}}}"#
+            )))
+        }
+    }
+
     func testCodexResetCouponCountPreservesZeroAndMissing() throws {
         let zero = try CodexUsageDecoder().decode(
             jsonData(

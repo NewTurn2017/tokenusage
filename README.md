@@ -2,8 +2,8 @@
 
 ## 다운로드와 설치
 
-[v0.2.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.2.0)에서
-`TokenUsage-0.2.0-macos-universal.zip`을 받아 압축을 풀고,
+[v0.3.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.3.0)에서
+`TokenUsage-0.3.0-macos-universal.zip`을 받아 압축을 풀고,
 `Token Usage.app`을 응용 프로그램 폴더로 옮겨 실행하세요.
 Apple Silicon과 Intel용 실행 파일을 함께 포함하며 macOS 14 이상이 필요합니다.
 서비스별 로그인 요구 사항은 아래를 참고하세요.
@@ -15,7 +15,7 @@ Token Usage는 macOS 메뉴 막대에서 AI 서비스의 사용량과 한도, �
 현재 지원하는 서비스는 다음과 같습니다.
 
 * **Claude**: 5시간 한도와 주간 한도
-* **Codex**: 주간 한도와 프로필별 상태
+* **Codex**: 주간 한도, 계정별 남은 추가 크레딧과 프로필별 상태
 * **OpenRouter**: 사용량, 크레딧 또는 한도, 잔액, 티어와 요청 제한
 
 ## 요구 사항
@@ -64,11 +64,13 @@ swift test
 
 ## 현재 배포 상태
 
-v0.2.0 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티켓 동봉을 완료했습니다. 압축 해제한 앱의 Gatekeeper 승인도 확인했습니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 로컬 테스트용 ad hoc 서명을 사용하므로, 직접 빌드한 앱과 공증된 다운로드 파일은 구분해야 합니다.
+공개 배포 ZIP은 Developer ID 서명, Hardened Runtime, Apple 공증과 티켓 동봉을 완료했습니다. 압축 해제한 앱의 Gatekeeper 승인도 확인했습니다. 기본 빌드 스크립트는 별도 서명 설정이 없으면 로컬 테스트용 ad hoc 서명을 사용하므로, 직접 빌드한 앱과 공증된 다운로드 파일은 구분해야 합니다.
 
 자동 업데이트 기능은 현재 코드에서 확인되지 않았습니다. 따라서 자동 업데이트를 제공하지 않습니다.
 
-## 초기화 쿠폰
+## 추가 크레딧과 초기화 쿠폰
+
+Codex 계정마다 **추가 크레딧** 잔액을 별도 한 줄로 표시합니다. 기존 `account/rateLimits/read` 응답의 `rateLimits.credits`에서 읽으며, 해당 값이 없으면 `rateLimitsByLimitId.codex.credits`를 확인합니다. 금액이 아닌 크레딧 단위로 소수점 둘째 자리까지 표시합니다. 무제한은 **무제한**, 잔액을 제공하지 않는 계정은 **잔액 미제공**, 크레딧 정보가 없거나 조회에 실패한 계정은 `--`로 표시합니다. 새로고침 실패 시 마지막 잔액은 계정의 **이전 값** 상태와 함께 유지됩니다.
 
 Codex의 `account/rateLimits/read` 응답에 `rateLimitResetCredits.availableCount` 값이 있을 때만 프로필 행에 **초기화 쿠폰** 개수를 표시합니다. 이 기능은 개수를 읽어 보여 주는 읽기 전용 기능이며, 쿠폰을 사용하거나 충전하지 않습니다. 값이 없으면 표시하지 않습니다.
 
