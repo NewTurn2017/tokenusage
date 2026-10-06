@@ -70,8 +70,12 @@ final class FixtureURLSession: URLSessionProtocol, @unchecked Sendable {
         FixtureURLProtocol.unregister(identifier)
     }
 
-    static func responding(statusCode: Int, body: Data) -> FixtureURLSession {
-        FixtureURLSession(outcome: .response(statusCode: statusCode, body: body))
+    static func responding(
+        statusCode: Int,
+        body: Data,
+        headers: [String: String] = [:]
+    ) -> FixtureURLSession {
+        FixtureURLSession(outcome: .response(statusCode: statusCode, body: body, headers: headers))
     }
 
     static func failing(with code: URLError.Code) -> FixtureURLSession {
@@ -91,7 +95,7 @@ final class FixtureURLSession: URLSessionProtocol, @unchecked Sendable {
 
 private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
     enum Outcome: Sendable {
-        case response(statusCode: Int, body: Data)
+        case response(statusCode: Int, body: Data, headers: [String: String])
         case failure(URLError.Code)
     }
 
@@ -128,13 +132,13 @@ private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
         }
 
         switch outcome {
-        case let .response(statusCode, body):
+        case let .response(statusCode, body, headers):
             guard let url = request.url,
                   let response = HTTPURLResponse(
                       url: url,
                       statusCode: statusCode,
                       httpVersion: "HTTP/1.1",
-                      headerFields: ["Content-Type": "application/json"]
+                      headerFields: headers.merging(["Content-Type": "application/json"]) { header, _ in header }
                   )
             else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))

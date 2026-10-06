@@ -5,6 +5,7 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
     case currentAccountMissing
     case profileNotFound
     case credentialMissing
+    case activeCredentialExpired
     case accountValidationFailed
     case accountIdentityMismatch
     case concurrentModification
@@ -27,6 +28,8 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
             "해당 Claude 계정을 찾지 못했습니다."
         case .credentialMissing:
             "저장된 Claude 자격 증명이 없습니다."
+        case .activeCredentialExpired:
+            "현재 Claude Code 토큰이 만료되었습니다. Claude Code에서 다시 로그인해 주세요."
         case .accountValidationFailed:
             "Claude 계정을 확인하지 못했습니다."
         case .accountIdentityMismatch:
@@ -122,6 +125,9 @@ public actor ClaudeProfileManager {
     public func saveCurrent(named requestedName: String) async throws -> ClaudeProfileMetadata {
         let name = try validatedName(requestedName)
         let section = try currentOAuthSection()
+        guard !(try ClaudeCredentialEnvelope.token(in: section)).isExpired(at: now()) else {
+            throw ClaudeProfileManagerError.activeCredentialExpired
+        }
         let account = try await validatedCurrentAccount()
         return try persist(
             name: name,
@@ -316,6 +322,9 @@ public actor ClaudeProfileManager {
         }
 
         if id == preferences.activeProfileID {
+            guard !token.isExpired(at: now(), leeway: 0) else {
+                throw ClaudeProfileManagerError.activeCredentialExpired
+            }
             return token.accessToken
         }
         guard token.isExpired(at: now()) else { return token.accessToken }
@@ -344,6 +353,8 @@ public actor ClaudeProfileManager {
         guard let profile = profiles.first(where: { $0.id == id }) else {
             throw ClaudeProfileManagerError.profileNotFound
         }
+        syncActiveProfile()
+        _ = try await accessToken(for: id)
         guard let candidate = try storedCredential(id) else {
             throw ClaudeProfileManagerError.credentialMissing
         }

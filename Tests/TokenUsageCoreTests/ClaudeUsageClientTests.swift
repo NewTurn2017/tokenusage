@@ -129,6 +129,173 @@ final class ClaudeUsageClientTests: XCTestCase {
         )
     }
 
+    func testExpiredLiveCredentialsNeverReachTheUsageAPI() async {
+        let session = FixtureURLSession.responding(
+            statusCode: 200,
+            body: jsonData(#"{"five_hour":{"utilization":16,"resets_at":null}}"#)
+        )
+        let credential = jsonData(
+            #"{"claudeAiOauth":{"accessToken":"expired-token","expiresAt":1699999000000}}"#
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credential),
+            session: session,
+            capturedAt: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+
+        await assertUsageFails(client)
+
+        XCTAssertTrue(session.requests.isEmpty)
+    }
+
+    func testRetryAfterSuppressesRequestsBeforeTheServerDeadline() async {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "3105"]
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        await assertUsageFails(client)
+        clock.advance(by: 300)
+
+        await assertUsageFails(client)
+
+        XCTAssertEqual(session.requests.count, 1)
+    }
+
+    func testRetryAfterAllowsARequestAtTheServerDeadline() async {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "3105"]
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        await assertUsageFails(client)
+        clock.advance(by: 3105)
+
+        await assertUsageFails(client)
+
+        XCTAssertEqual(session.requests.count, 2)
+    }
+
+    func testHTTPDateRetryAfterAllowsARequestAtItsDeadline() async {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "Tue, 14 Nov 2023 22:15:20 GMT"]
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        await assertUsageFails(client)
+        clock.advance(by: 120)
+
+        await assertUsageFails(client)
+
+        XCTAssertEqual(session.requests.count, 2)
+    }
+
+    func testZeroRetryAfterDoesNotPermitAnImmediateRetry() async {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "0"]
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        await assertUsageFails(client)
+        clock.advance(by: 1)
+
+        await assertUsageFails(client)
+
+        XCTAssertEqual(session.requests.count, 1)
+    }
+
+    func testCooldownForOneTokenDoesNotBlockAnotherAccount() async {
+        let session = FixtureURLSession.responding(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "3105"]
+        )
+        let client = makeClient(token: "account-a", session: session)
+        await assertUsageFails(client)
+
+        do {
+            _ = try await client.usage(accessToken: "account-b")
+            XCTFail("Expected the second account's server response to fail")
+        } catch {
+            XCTAssertTrue(error is ClaudeUsageClientError)
+        }
+
+        XCTAssertEqual(session.requests.count, 2)
+    }
+
+    func testFreshUsageIsReusedInsteadOfRepeatedlyRequestingTheSameAccount() async throws {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 200,
+            body: jsonData(#"{"five_hour":{"utilization":16,"resets_at":null}}"#)
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        let previous = try await client.usage()
+        clock.advance(by: 30)
+
+        let cached = try await client.usage()
+
+        XCTAssertEqual(session.requests.count, 1)
+        XCTAssertEqual(cached, previous)
+    }
+
+    func testUsageCacheExpiresAtTheAutomaticRefreshInterval() async throws {
+        let clock = ClaudeUsageTestClock()
+        let session = FixtureURLSession.responding(
+            statusCode: 200,
+            body: jsonData(#"{"five_hour":{"utilization":16,"resets_at":null}}"#)
+        )
+        let client = ClaudeUsageClient(
+            credentialStore: StubCredentialStore(credential: credentialData(token: "account-a")),
+            session: session,
+            capturedAt: { clock.now }
+        )
+        _ = try await client.usage()
+        clock.advance(by: 300)
+
+        let refreshed = try await client.usage()
+
+        XCTAssertEqual(session.requests.count, 2)
+        XCTAssertEqual(refreshed.capturedAt, clock.now)
+    }
+
+    private func assertUsageFails(_ client: ClaudeUsageClient) async {
+        do {
+            _ = try await client.usage()
+            XCTFail("Expected usage to remain unavailable")
+        } catch {
+            XCTAssertTrue(error is ClaudeUsageClientError)
+        }
+    }
+
     func testCancellationPropagatesThroughAsyncCredentialReadBeforeNetworkRequest() async {
         let started = expectation(description: "credential read started")
         let cancelled = expectation(description: "credential read cancelled")
@@ -200,5 +367,16 @@ final class ClaudeUsageClientTests: XCTestCase {
                 XCTAssertFalse(String(describing: error).contains(forbiddenValue))
             }
         }
+    }
+}
+
+private final class ClaudeUsageTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date(timeIntervalSince1970: 1_700_000_000)
+
+    var now: Date { lock.withLock { value } }
+
+    func advance(by seconds: TimeInterval) {
+        lock.withLock { value.addTimeInterval(seconds) }
     }
 }

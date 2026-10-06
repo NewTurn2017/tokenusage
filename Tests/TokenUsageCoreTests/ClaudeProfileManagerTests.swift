@@ -60,6 +60,73 @@ final class ClaudeProfileManagerTests: XCTestCase {
         XCTAssertNotEqual(personal.id, work.id)
     }
 
+    func testActivateRenewsAnExpiredInactiveAccountBeforeInstallingIt() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        fixture.refresher = FakeClaudeOAuthRefresher(
+            replacement: ClaudeOAuthToken(
+                accessToken: "work-token-renewed",
+                refreshToken: "work-refresh-rotated",
+                expiresAt: now.addingTimeInterval(28_800)
+            )
+        )
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-expired",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        fixture.authStatus.setAccount(ClaudeAccount(email: "work@example.com"))
+
+        try await manager.activateProfile(id: work.id)
+
+        let live = try XCTUnwrap(fixture.liveCredential.current)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: live) as? [String: Any])
+        let token = try ClaudeCredentialEnvelope.token(
+            in: ClaudeCredentialEnvelope.oauthSection(from: live)
+        )
+        XCTAssertEqual(token.accessToken, "work-token-renewed")
+        XCTAssertEqual(fixture.refresher.callCount, 1)
+        XCTAssertNotNil(root["mcpOAuth"])
+    }
+
+    func testSaveCurrentRejectsExpiredCredentialsBeforeInvokingTheCLI() async throws {
+        let fixture = Fixture(
+            liveAccessToken: "expired-token",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        let manager = fixture.manager(now: { Date(timeIntervalSince1970: 1_700_000_000) })
+
+        do {
+            _ = try await manager.saveCurrent(named: "personal")
+            XCTFail("Expired credentials must not be captured as a signed-in account")
+        } catch {
+            XCTAssertEqual(error as? ClaudeProfileManagerError, .activeCredentialExpired)
+        }
+
+        XCTAssertEqual(fixture.authStatus.callCount, 0)
+        XCTAssertTrue(try fixture.preferences.profiles().isEmpty)
+    }
+
+    func testSaveCurrentAvoidsTheCLIInsideItsTokenRefreshWindow() async throws {
+        let fixture = Fixture(
+            liveAccessToken: "nearly-expired-token",
+            expiresAtMilliseconds: 1_700_000_240_000
+        )
+        let manager = fixture.manager(now: { Date(timeIntervalSince1970: 1_700_000_000) })
+
+        do {
+            _ = try await manager.saveCurrent(named: "personal")
+            XCTFail("A short-lived auth check must not start a token refresh")
+        } catch {
+            XCTAssertEqual(error as? ClaudeProfileManagerError, .activeCredentialExpired)
+        }
+
+        XCTAssertEqual(fixture.authStatus.callCount, 0)
+    }
+
     func testActivateKeepsTheOutgoingAccountsFreshestToken() async throws {
         let fixture = Fixture(liveAccessToken: "personal-token")
         let manager = fixture.manager()
@@ -128,10 +195,31 @@ final class ClaudeProfileManagerTests: XCTestCase {
         }
     }
 
-    func testAccessTokenNeverRenewsTheAccountClaudeCodeIsUsing() async throws {
-        let expired = Int64(Date().addingTimeInterval(-3_600).timeIntervalSince1970 * 1_000)
-        let fixture = Fixture(liveAccessToken: "personal-token", expiresAtMilliseconds: expired)
-        let manager = fixture.manager()
+    func testAccessTokenRejectsAnExpiredActiveAccountWithoutRenewingIt() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { Date(timeIntervalSince1970: 1_700_000_000) })
+        let personal = try await manager.saveCurrent(named: "personal")
+        try fixture.credentials.storeCredential(
+            ClaudeCredentialFixture.oauthSection(
+                accessToken: "personal-token",
+                expiresAtMilliseconds: 1_699_999_000_000
+            ),
+            named: personal.id
+        )
+
+        do {
+            _ = try await manager.accessToken(for: personal.id)
+            XCTFail("An expired active token must not be sent to the API")
+        } catch {
+            XCTAssertEqual(error as? ClaudeProfileManagerError, .activeCredentialExpired)
+        }
+
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+    }
+
+    func testAccessTokenReturnsAValidActiveAccountWithoutRenewingIt() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { Date(timeIntervalSince1970: 1_700_000_000) })
         let personal = try await manager.saveCurrent(named: "personal")
 
         let token = try await manager.accessToken(for: personal.id)
@@ -449,7 +537,10 @@ private final class Fixture {
         try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
-    func manager(withLoginRunner: Bool = true) -> ClaudeProfileManager {
+    func manager(
+        withLoginRunner: Bool = true,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) -> ClaudeProfileManager {
         ClaudeProfileManager(
             credentialStore: credentials,
             preferences: preferences,
@@ -460,7 +551,8 @@ private final class Fixture {
             loginRunner: withLoginRunner ? loginRunner : nil,
             isolatedCredentials: isolatedCredentials,
             temporaryDirectory: temporaryDirectory,
-            profileID: { [issuedIDs] in "profile-\(issuedIDs.next())" }
+            profileID: { [issuedIDs] in "profile-\(issuedIDs.next())" },
+            now: now
         )
     }
 

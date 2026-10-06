@@ -2,8 +2,8 @@
 
 ## 다운로드와 설치
 
-[v0.3.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.3.0)에서
-`TokenUsage-0.3.0-macos-universal.zip`을 받아 압축을 풀고,
+[v0.3.1 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.3.1)에서
+`TokenUsage-0.3.1-macos-universal.zip`을 받아 압축을 풀고,
 `Token Usage.app`을 응용 프로그램 폴더로 옮겨 실행하세요.
 Apple Silicon과 Intel용 실행 파일을 함께 포함하며 macOS 14 이상이 필요합니다.
 서비스별 로그인 요구 사항은 아래를 참고하세요.
@@ -30,6 +30,8 @@ Token Usage는 macOS 메뉴 막대에서 AI 서비스의 사용량과 한도, �
 ## 인증과 데이터
 
 앱은 사용량을 서비스에서 직접 읽습니다. Claude는 macOS 키체인의 `Claude Code-credentials` 항목에서 OAuth 토큰을 읽고 `https://api.anthropic.com/api/oauth/usage`에 요청합니다. Codex는 설치된 `codex app-server --stdio` 프로세스에 JSON-RPC로 요청합니다. OpenRouter는 API 키를 사용해 `https://openrouter.ai/api/v1/key`와 `https://openrouter.ai/api/v1/credits`에 GET 요청을 보냅니다.
+
+Claude 조회 결과는 계정 토큰별로 5분 동안 재사용합니다. HTTP 429 응답을 받으면 서버의 `Retry-After` 시각까지 같은 토큰으로 다시 요청하지 않으며, 유효한 대기 시간이 없으면 최소 5분을 기다립니다. 만료된 활성 계정 토큰은 전송하지 않습니다. 활성 계정의 토큰 갱신은 Claude Code가 담당하므로, 만료 안내가 나오면 Claude Code에서 다시 로그인해 주세요.
 
 Codex 프로필 자격 증명은 macOS 키체인에 저장되고, 프로필 이름과 같은 메타데이터는 `UserDefaults`에 저장됩니다. Codex 로그인 검증 중에는 임시 디렉터리의 제한된 파일을 사용한 뒤 제거합니다. OpenRouter 키 파일은 앱이 읽기만 합니다. 코드상 별도의 분석 서버나 앱 자체 수집 엔드포인트는 확인되지 않았습니다. 서비스 요청에는 각 서비스의 인증 정보와 사용량 응답이 포함될 수 있으므로, 네트워크 사용과 해당 서비스의 정책을 고려해 사용하세요.
 

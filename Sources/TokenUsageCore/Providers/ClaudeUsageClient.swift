@@ -1,10 +1,13 @@
+import CryptoKit
 import Foundation
 
 public enum ClaudeUsageClientError: Error, Equatable, Sendable {
     case credentialUnavailable
     case credentialAccessFailed
+    case credentialExpired
     case malformedCredential
     case unauthorized
+    case rateLimited(retryAt: Date)
     case networkFailure
     case malformedResponse
     case unexpectedHTTPStatus(Int)
@@ -17,10 +20,14 @@ extension ClaudeUsageClientError: LocalizedError {
             return "Claude credentials are unavailable."
         case .credentialAccessFailed:
             return "Claude credentials could not be read."
+        case .credentialExpired:
+            return "Claude 로그인 토큰이 만료되었습니다. Claude Code에서 다시 로그인해 주세요."
         case .malformedCredential:
             return "Claude credentials are invalid."
         case .unauthorized:
             return "Claude authorization failed."
+        case let .rateLimited(retryAt):
+            return "Claude 조회가 제한되었습니다. \(retryAt.formatted(date: .abbreviated, time: .standard)) 이후 다시 시도합니다."
         case .networkFailure:
             return "Claude usage could not be reached."
         case .malformedResponse:
@@ -48,6 +55,7 @@ public struct ClaudeUsageClient: UsageProviding, Sendable {
     private let storedCredentialName: String
     private let capturedAt: @Sendable () -> Date
     private let decoder: ClaudeUsageDecoder
+    private let cache = ClaudeUsageCache()
 
     public init(
         credentialStore: any CredentialStoring,
@@ -94,26 +102,30 @@ public struct ClaudeUsageClient: UsageProviding, Sendable {
             throw ClaudeUsageClientError.credentialAccessFailed
         }
 
-        let accessToken: String
+        let token: ClaudeOAuthToken
         do {
-            accessToken = try JSONDecoder().decode(CredentialEnvelope.self, from: credentialData)
-                .claudeAiOauth.accessToken
-            guard !accessToken.isEmpty else {
-                throw ClaudeUsageClientError.malformedCredential
-            }
-        } catch let error as ClaudeUsageClientError {
-            throw error
+            token = try ClaudeCredentialEnvelope.token(
+                in: ClaudeCredentialEnvelope.oauthSection(from: credentialData)
+            )
         } catch {
             throw ClaudeUsageClientError.malformedCredential
         }
+        guard !token.isExpired(at: capturedAt(), leeway: 0) else {
+            throw ClaudeUsageClientError.credentialExpired
+        }
 
-        return try await usage(accessToken: accessToken)
+        return try await usage(accessToken: token.accessToken)
     }
 
     /// Reads usage for an account other than the one Claude Code is signed in as, whose token
     /// this app already holds.
     public func usage(accessToken: String) async throws -> UsageSnapshot {
         guard !accessToken.isEmpty else { throw ClaudeUsageClientError.malformedCredential }
+        try Task.checkCancellation()
+        if let snapshot = try await cache.snapshot(for: accessToken, at: capturedAt()) {
+            try Task.checkCancellation()
+            return snapshot
+        }
 
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "GET"
@@ -137,22 +149,70 @@ public struct ClaudeUsageClient: UsageProviding, Sendable {
         if httpResponse.statusCode == 401 {
             throw ClaudeUsageClientError.unauthorized
         }
+        if httpResponse.statusCode == 429 {
+            let now = capturedAt()
+            var retryAt = now.addingTimeInterval(ClaudeUsageCache.minimumInterval)
+            if let header = httpResponse.value(forHTTPHeaderField: "Retry-After") {
+                if let seconds = TimeInterval(header), seconds.isFinite, seconds > 0 {
+                    retryAt = now.addingTimeInterval(seconds)
+                } else {
+                    let formatter = DateFormatter()
+                    formatter.locale = Locale(identifier: "en_US_POSIX")
+                    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                    formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+                    if let date = formatter.date(from: header), date > now {
+                        retryAt = date
+                    }
+                }
+            }
+            await cache.store(.limited(retryAt), for: accessToken)
+            throw ClaudeUsageClientError.rateLimited(retryAt: retryAt)
+        }
         guard (200...299).contains(httpResponse.statusCode) else {
             throw ClaudeUsageClientError.unexpectedHTTPStatus(httpResponse.statusCode)
         }
 
+        let snapshot: UsageSnapshot
         do {
-            return try decoder.decode(data, capturedAt: capturedAt())
+            snapshot = try decoder.decode(data, capturedAt: capturedAt())
         } catch {
             throw ClaudeUsageClientError.malformedResponse
         }
+        await cache.store(.value(snapshot), for: accessToken)
+        return snapshot
     }
 }
 
-private struct CredentialEnvelope: Decodable {
-    let claudeAiOauth: OAuthCredential
+private actor ClaudeUsageCache {
+    static let minimumInterval: TimeInterval = 300
 
-    struct OAuthCredential: Decodable {
-        let accessToken: String
+    enum Entry {
+        case value(UsageSnapshot)
+        case limited(Date)
+    }
+
+    private var entries: [SHA256.Digest: Entry] = [:]
+
+    func snapshot(for accessToken: String, at date: Date) throws -> UsageSnapshot? {
+        entries = entries.filter { _, entry in
+            switch entry {
+            case let .value(snapshot):
+                snapshot.capturedAt.addingTimeInterval(Self.minimumInterval) > date
+            case let .limited(retryAt):
+                retryAt > date
+            }
+        }
+        switch entries[SHA256.hash(data: Data(accessToken.utf8))] {
+        case let .value(snapshot):
+            return snapshot
+        case let .limited(retryAt):
+            throw ClaudeUsageClientError.rateLimited(retryAt: retryAt)
+        case nil:
+            return nil
+        }
+    }
+
+    func store(_ entry: Entry, for accessToken: String) {
+        entries[SHA256.hash(data: Data(accessToken.utf8))] = entry
     }
 }
