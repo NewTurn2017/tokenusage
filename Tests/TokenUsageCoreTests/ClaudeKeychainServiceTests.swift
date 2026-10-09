@@ -54,12 +54,18 @@ final class ClaudeKeychainServiceTests: XCTestCase {
         XCTAssertEqual(isolated["HOME"], "/Users/example")
     }
 
-    func testWithoutADirectoryTheEnvironmentIsLeftExactlyAsItWas() {
-        let environment = ["HOME": "/Users/example"]
+    func testWithoutADirectoryTheCLIIsPointedAtTheDefaultAccount() {
+        // An app launched from a terminal inherits that terminal's profile directory, which names
+        // a different account than the default Keychain item the app reads.
+        let inherited = [
+            "HOME": "/Users/example",
+            "CLAUDE_CONFIG_DIR": "/Users/example/.claude-profiles/cc4",
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR": "/Users/example/.claude-profiles/cc4",
+        ]
 
         XCTAssertEqual(
-            ClaudeCLIEnvironment.isolating(environment, configurationDirectory: nil),
-            environment
+            ClaudeCLIEnvironment.isolating(inherited, configurationDirectory: nil),
+            ["HOME": "/Users/example"]
         )
     }
 }

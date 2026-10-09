@@ -240,7 +240,7 @@ final class StatusItemView: NSView {
             let weekly = Self.label(
                 text: profile.weeklyText,
                 font: StatusItemDesignSystem.Typography.valueFont,
-                accessibilityLabel: "Claude \(profile.name) weekly remaining"
+                accessibilityLabel: "Claude \(profile.name) \(profile.weeklyAccessibilityName) remaining"
             )
             fiveHour.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-five-hour")
             weekly.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-weekly")
@@ -297,7 +297,9 @@ final class StatusItemView: NSView {
         let claudeDescription = presentation.claudeProfiles.isEmpty
             ? "no accounts"
             : presentation.claudeProfiles
-                .map { "\($0.name) \($0.fiveHourText), \($0.weeklyText)" }
+                .map {
+                    "\($0.name) \($0.fiveHourText), \($0.weeklyAccessibilityName) \($0.weeklyText)"
+                }
                 .joined(separator: ", ")
         var description = "Claude \(claudeDescription); Codex \(codexDescription)"
         if let balance = presentation.openRouterBalanceText {

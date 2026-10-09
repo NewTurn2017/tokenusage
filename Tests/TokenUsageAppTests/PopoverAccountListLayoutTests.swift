@@ -31,24 +31,30 @@ final class PopoverAccountListLayoutTests: XCTestCase {
 
     func testEveryClaudeAccountUpToTheLimitIsVisibleWithoutScrolling() {
         // Every saved account is visible and directly switchable from its row.
-        let two = popoverHeight(codexCount: 1, claudeCount: 2)
-        let three = popoverHeight(codexCount: 1, claudeCount: 3)
-        let four = popoverHeight(codexCount: 1, claudeCount: 4)
+        let heights = (2...6).map { popoverHeight(codexCount: 1, claudeCount: $0) }
 
         let rowStride = ClaudeProfileQuotaListLayout.maximumHeight(rowCount: 3)
             - ClaudeProfileQuotaListLayout.maximumHeight(rowCount: 2)
-        XCTAssertEqual(three - two, rowStride, accuracy: 2)
-        XCTAssertEqual(four, three, accuracy: 1)
+        XCTAssertEqual(
+            ClaudeProfileQuotaListLayout.unscrolledRowLimit,
+            5,
+            "one Max account plus four Team seats all stay in view"
+        )
+        for index in 1...3 {
+            XCTAssertEqual(heights[index] - heights[index - 1], rowStride, accuracy: 2)
+        }
+        // Past the limit the list scrolls instead of pushing the popover off the screen.
+        XCTAssertEqual(heights[4], heights[3], accuracy: 1)
     }
 
     func testTheFullyPopulatedPopoverStillFitsALaptopDisplay() {
         let height = popoverHeight(
             codexCount: CodexProfileQuotaListLayout.unscrolledRowLimit,
-            claudeCount: 2
+            claudeCount: ClaudeProfileQuotaListLayout.unscrolledRowLimit
         )
 
         XCTAssertLessThan(height, Self.laptopVisibleHeight)
-        print("POPOVER_QA claude=2 codex=3 height=\(height) limit=\(Self.laptopVisibleHeight)")
+        print("POPOVER_QA claude=5 codex=3 height=\(height) limit=\(Self.laptopVisibleHeight)")
     }
     func testCommonThreeCodexAccountStateIsRoughlyFortyPercentShorterThanProductionBaseline() {
         let redesignedHeight = popoverHeight(codexCount: 3, claudeCount: 0)

@@ -182,6 +182,12 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
         self.pace = pace
     }
 
+    /// "61%" without the trailing "남음", for account rows that sit under the "남은 사용량" title
+    /// and need the room for a third window.
+    public var percentText: String {
+        remainingFraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "--"
+    }
+
     /// Short Korean label so the pace is readable without relying on colour alone.
     public var paceText: String? {
         switch pace {
@@ -280,6 +286,12 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
     public let emailAddress: String?
     public let fiveHour: QuotaWindowPresentation
     public let weekly: QuotaWindowPresentation
+    /// The Fable-only weekly limit; nil when the account's plan reports none.
+    public let fable: QuotaWindowPresentation?
+    /// What the row shows, in order: 5-hour, then whichever weekly limits the plan reports.
+    /// Team plans report no all-model weekly limit, only the Fable one, so Fable takes the weekly
+    /// slot there; an account that reported neither keeps the weekly placeholder.
+    public let windows: [QuotaWindowPresentation]
     public let resetCoupon: ResetCouponPresentation?
     public let freshnessText: String
     public let isActive: Bool
@@ -292,13 +304,25 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
         let active = isActive ? ", 사용 중" : ""
         let email = emailAddress.map { ", \($0)" } ?? ""
         let coupon = resetCoupon.map { ", \($0.accessibilityText)" } ?? ""
-        return "\(name)\(email)\(active), \(freshnessText), "
-            + "5시간 \(fiveHour.remaining)\(resetSuffix(fiveHour)), "
-            + "주간 \(weekly.remaining)\(resetSuffix(weekly))\(coupon)"
+        let quotas = windows
+            .map { "\($0.window) \($0.remaining)\(resetSuffix($0))" }
+            .joined(separator: ", ")
+        return "\(name)\(email)\(active), \(freshnessText), \(quotas)\(coupon)"
     }
 
     private func resetSuffix(_ window: QuotaWindowPresentation) -> String {
         window.reset == "--" ? "" : " \(window.reset)"
+    }
+
+    /// 5-hour first, then whichever weekly limits were reported; the weekly placeholder stays when
+    /// neither was, so the row keeps its shape.
+    static func displayedWindows(
+        fiveHour: QuotaWindowPresentation,
+        weekly: QuotaWindowPresentation,
+        fable: QuotaWindowPresentation?,
+        reportsWeekly: Bool
+    ) -> [QuotaWindowPresentation] {
+        [fiveHour] + (reportsWeekly || fable == nil ? [weekly] : []) + (fable.map { [$0] } ?? [])
     }
 }
 
@@ -810,19 +834,24 @@ public final class AppViewModel: ObservableObject {
             let state = states[profile.id]
                 ?? .unavailable(message: "Claude 사용량을 불러오지 못했습니다.")
             let value = usageSnapshot(from: state)
+            let service = "Claude \(profile.name)"
+            let fiveHour = compactPresentation(service: service, window: "5시간", value: value?.fiveHour)
+            let weekly = compactPresentation(service: service, window: "주간", value: value?.weekly)
+            let fable = value?.fableWeekly.map {
+                compactPresentation(service: service, window: "Fable", value: $0)
+            }
             return ClaudeProfileQuotaPresentation(
                 profileID: profile.id,
                 name: profile.name,
                 emailAddress: profile.emailAddress,
-                fiveHour: compactPresentation(
-                    service: "Claude \(profile.name)",
-                    window: "5시간",
-                    value: value?.fiveHour
-                ),
-                weekly: compactPresentation(
-                    service: "Claude \(profile.name)",
-                    window: "주간",
-                    value: value?.weekly
+                fiveHour: fiveHour,
+                weekly: weekly,
+                fable: fable,
+                windows: ClaudeProfileQuotaPresentation.displayedWindows(
+                    fiveHour: fiveHour,
+                    weekly: weekly,
+                    fable: fable,
+                    reportsWeekly: value?.weekly != nil
                 ),
                 resetCoupon: resetCoupon(from: value),
                 freshnessText: freshnessText(for: state),

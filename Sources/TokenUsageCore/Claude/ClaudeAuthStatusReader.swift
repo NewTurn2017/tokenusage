@@ -138,12 +138,20 @@ public struct ClaudeCLIAuthStatusReader: ClaudeAuthStatusReading, Sendable {
 public enum ClaudeCLIEnvironment {
     /// Both variables are needed: the first moves the settings directory, the second moves the
     /// credential storage that the Keychain item name is derived from.
+    ///
+    /// Without a directory the CLI is pointed at the default account - the one whose Keychain
+    /// item this app reads and swaps - even when the app inherited a `CLAUDE_CONFIG_DIR` from the
+    /// terminal that launched it.
     public static func isolating(
         _ environment: [String: String],
         configurationDirectory: URL?
     ) -> [String: String] {
-        guard let configurationDirectory else { return environment }
         var isolated = environment
+        guard let configurationDirectory else {
+            isolated["CLAUDE_CONFIG_DIR"] = nil
+            isolated["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = nil
+            return isolated
+        }
         let path = configurationDirectory.path
         isolated["CLAUDE_CONFIG_DIR"] = path
         isolated["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = path

@@ -4,13 +4,22 @@ import Foundation
 final class MemoryClaudeCredentialStore: CredentialStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [String: Data] = [:]
+    private var refusesWrites = false
+
+    /// Mimics a Keychain item whose access list no longer trusts the app.
+    func setRefusesWrites(_ refuses: Bool) {
+        lock.withLock { refusesWrites = refuses }
+    }
 
     func credential(named name: String) throws -> Data? {
         lock.withLock { storage[name] }
     }
 
     func storeCredential(_ credential: Data, named name: String) throws {
-        lock.withLock { storage[name] = credential }
+        try lock.withLock {
+            if refusesWrites { throw KeychainCredentialStoreError.operationFailed }
+            storage[name] = credential
+        }
     }
 
     func removeCredential(named name: String) throws {

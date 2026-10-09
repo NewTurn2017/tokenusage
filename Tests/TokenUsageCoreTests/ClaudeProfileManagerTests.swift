@@ -257,6 +257,41 @@ final class ClaudeProfileManagerTests: XCTestCase {
         XCTAssertEqual(renewed.refreshToken, "work-refresh-rotated")
     }
 
+    func testARenewedTokenTheKeychainRefusesIsKeptAndWrittenLater() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        fixture.refresher = FakeClaudeOAuthRefresher(
+            replacement: ClaudeOAuthToken(
+                accessToken: "work-token-renewed",
+                refreshToken: "work-refresh-rotated",
+                expiresAt: Date().addingTimeInterval(28_800)
+            )
+        )
+        let manager = fixture.manager()
+        _ = try await manager.saveCurrent(named: "personal")
+        let expired = Int64(Date().addingTimeInterval(-60).timeIntervalSince1970 * 1_000)
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token",
+            email: "work@example.com",
+            expiresAtMilliseconds: expired
+        )
+
+        fixture.credentials.setRefusesWrites(true)
+        let first = try await manager.accessToken(for: work.id)
+        // The rotated refresh token exists only in memory now; it must not be renewed again
+        // from the spent one still in the Keychain.
+        let second = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(first, "work-token-renewed")
+        XCTAssertEqual(second, "work-token-renewed")
+        XCTAssertEqual(fixture.refresher.callCount, 1)
+
+        fixture.credentials.setRefusesWrites(false)
+        _ = try await manager.accessToken(for: work.id)
+        let stored = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        XCTAssertEqual(try ClaudeCredentialEnvelope.token(in: stored).refreshToken, "work-refresh-rotated")
+    }
+
     func testAccessTokenReportsASignedOutAccountDistinctly() async throws {
         let fixture = Fixture(liveAccessToken: "personal-token")
         fixture.refresher.setFailure(ClaudeOAuthRefreshError.rejected)
@@ -450,6 +485,60 @@ final class ClaudeProfileManagerTests: XCTestCase {
         XCTAssertEqual(try fixture.credentials.credential(named: personal.id), personalCredential)
     }
 
+    func testAConfigFileNamingAnotherAccountNeverFilesTheLiveTokenUnderIt() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager()
+        let personal = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token",
+            email: "work@example.com"
+        )
+        let workCredential = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        // The Keychain still holds personal's token, but the config file names work: a session
+        // still running on another account rewrote it, or the app was started with another
+        // profile's CLAUDE_CONFIG_DIR.
+        try fixture.configOperator.applyAccountJSON(
+            ClaudeCredentialFixture.configAccount(email: "work@example.com", accountUUID: "work-uuid")
+        )
+
+        await manager.syncActiveProfile()
+
+        let activeProfileID = await manager.activeProfileID()
+        XCTAssertEqual(activeProfileID, personal.id)
+        XCTAssertEqual(
+            try fixture.credentials.credential(named: work.id),
+            workCredential,
+            "work must keep its own token, not receive personal's"
+        )
+    }
+
+    func testAnAccountHoldingAnotherAccountsTokenIsNeitherReadNorRenewed() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager()
+        let personal = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token",
+            email: "work@example.com",
+            expiresAtMilliseconds: Int64(Date().addingTimeInterval(-60).timeIntervalSince1970 * 1_000)
+        )
+        // The damage an earlier mismatch left behind: work's slot holds personal's token.
+        let personalCredential = try XCTUnwrap(fixture.credentials.credential(named: personal.id))
+        try fixture.credentials.storeCredential(personalCredential, named: work.id)
+
+        do {
+            _ = try await manager.accessToken(for: work.id)
+            XCTFail("another account's token must not report usage for, or be renewed as, work")
+        } catch let error as ClaudeProfileManagerError {
+            XCTAssertEqual(error, .credentialHeldByAnotherAccount)
+        }
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+        // The account the token really belongs to keeps working.
+        let personalToken = try await manager.accessToken(for: personal.id)
+        XCTAssertEqual(personalToken, "personal-token")
+    }
+
     func testSyncLeavesEverythingAloneWhenTheConfigNamesNoAccount() async throws {
         let fixture = Fixture(liveAccessToken: "personal-token")
         let manager = fixture.manager()
@@ -592,8 +681,12 @@ private final class Fixture {
 
     func replaceLive(accessToken: String) throws {
         let current = liveCredential.current
+        // A sign-in or a renewal always comes with a refresh token of its own.
         try liveCredential.replaceEnvelope(
-            with: ClaudeCredentialFixture.envelope(accessToken: accessToken),
+            with: ClaudeCredentialFixture.envelope(
+                accessToken: accessToken,
+                refreshToken: "\(accessToken)-refresh"
+            ),
             ifCurrentMatches: current
         )
     }

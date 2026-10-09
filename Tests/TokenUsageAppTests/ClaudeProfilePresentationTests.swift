@@ -154,6 +154,71 @@ final class ClaudeProfilePresentationTests: XCTestCase {
         )
     }
 
+    func testATeamAccountShowsItsFableLimitWhereTheWeeklyOneWouldBe() {
+        let model = makeModel()
+        let fableReset = Date(timeIntervalSince1970: 1_787_432_000)
+        let snapshot = AppUsageSnapshot(
+            claude: .unavailable(message: ""),
+            codexUsage: [],
+            codexProfiles: [],
+            activeCodexProfileID: nil,
+            openRouter: .notConfigured(message: ""),
+            removedCodexProfileNames: [],
+            claudeUsage: [
+                ClaudeProfileUsage(
+                    profileID: "max",
+                    state: .fresh(usage(fiveHour: 96, weekly: 54, fable: 70))
+                ),
+                ClaudeProfileUsage(
+                    profileID: "team",
+                    state: .fresh(UsageSnapshot(
+                        capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                        fiveHour: QuotaWindow(remainingPercent: 68, resetsAt: nil),
+                        fableWeekly: QuotaWindow(remainingPercent: 61, resetsAt: fableReset)
+                    ))
+                ),
+                ClaudeProfileUsage(profileID: "failed", state: .unavailable(message: "")),
+            ],
+            claudeProfiles: [
+                ClaudeProfileMetadata(id: "max", name: "claude-2020"),
+                ClaudeProfileMetadata(id: "team", name: "claude2"),
+                ClaudeProfileMetadata(id: "failed", name: "claude3"),
+            ],
+            // Fable is read per account, so an inactive account still shows its own.
+            activeClaudeProfileID: "max"
+        )
+
+        model.apply(.current(snapshot))
+
+        let rows = model.claudeQuotaRows
+        XCTAssertEqual(rows.map { $0.windows.map(\.window) }, [
+            ["5시간", "주간", "Fable"],
+            ["5시간", "Fable"],
+            // Nothing reported keeps the placeholder pair instead of an empty row.
+            ["5시간", "주간"],
+        ])
+        XCTAssertEqual(rows[1].fable?.remaining, "61% 남음")
+        XCTAssertEqual(rows[1].windows.map(\.percentText), ["68%", "61%"])
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)!
+        formatter.dateFormat = "M월 d일 a h:mm"
+        XCTAssertEqual(rows[1].fable?.reset, "\(formatter.string(from: fableReset)) 초기화")
+        XCTAssertTrue(rows[1].accessibilityLabel.contains("Fable 61% 남음"), rows[1].accessibilityLabel)
+        XCTAssertFalse(rows[1].accessibilityLabel.contains("주간"), rows[1].accessibilityLabel)
+        XCTAssertNil(rows[2].fable)
+
+        // The menu bar keeps one column per account: weekly when the plan has it, else Fable.
+        let menuBar = model.statusItemPresentation.claudeProfiles
+        XCTAssertEqual(menuBar.map(\.weeklyText), ["54%", "61%", "--"])
+        XCTAssertEqual(menuBar.map(\.weeklyIsFable), [false, true, false])
+        let view = StatusItemView(presentation: model.statusItemPresentation)
+        XCTAssertTrue(
+            view.accessibilityLabel()?.contains("claude2 68%, Fable weekly 61%") == true,
+            view.accessibilityLabel() ?? ""
+        )
+    }
+
     func testAMenuBarWithTwoClaudeAccountsStillFitsTheStatusBarHeight() {
         let model = makeModel()
         model.apply(.current(twoAccountSnapshot(activeID: "claude-1")))

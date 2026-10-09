@@ -25,6 +25,18 @@ final class ProductionCompositionTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testTheClaudeAccountIsReadFromTheDefaultConfigEvenWhenLaunchedFromAProfileTerminal() {
+        // The app reads the default Keychain item, so its config file must be the default one too;
+        // a terminal's CLAUDE_CONFIG_DIR names a different account.
+        let url = MenuBarController.claudeConfigFileURL(environment: [
+            "HOME": "/Users/example",
+            "CLAUDE_CONFIG_DIR": "/Users/example/.claude-profiles/cc4",
+        ])
+
+        XCTAssertEqual(url.path, "/Users/example/.claude.json")
+    }
+
     func testProductionCodexDependenciesShareInjectedResolverAndUseInjectedBrowserOpener() async throws {
         let fixtureRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("tokenusage-production-\(UUID().uuidString)", isDirectory: true)

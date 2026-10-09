@@ -35,13 +35,18 @@ behaviour, legibility, and accessibility take priority over decorative web patte
 - The header is one line: title and refresh state at left, activity at right.
 - Each provider owns one softly tinted section rather than a card per metric.
 - Account rows are scan-first: identity/state on the first line; quota, thin bar, reset, and coupon
-  metadata directly below. Claude keeps both account windows in every account row and keeps the
-  active account's Fable window visible as a compact line.
+  metadata directly below. Every Claude account row shows its 5-hour window, then whichever
+  weekly limits that account's plan reports: weekly, Fable, or both. Team plans report no
+  all-model weekly limit, so their Fable window and reset take the weekly slot. Row values are
+  bare percentages because the popover title already says they are what remains.
 - Account save/new-login/delete actions live in labelled provider menus. Opening an action reveals
   the existing native editor inline; destructive confirmation remains native.
 - Unconfigured OpenRouter uses one compact line. Errors remain visible above the footer actions.
-- Account lists show three rows before scrolling. The popover grows for one through three rows and
-  is capped after that.
+- Codex lists show three rows before scrolling and Claude lists five (one Max account beside four
+  Team seats). The popover grows row by row up to that limit and is capped after that, staying
+  under a 14-inch laptop's visible height.
+- The menu bar keeps one column per Claude account: 5-hour over weekly, or over Fable when the
+  plan has no weekly limit.
 
 ## Native behaviour and QA
 

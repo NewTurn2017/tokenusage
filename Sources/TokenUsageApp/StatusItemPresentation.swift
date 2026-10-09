@@ -11,7 +11,13 @@ struct StatusItemClaudeProfile: Equatable, Sendable {
     let profileID: String
     let name: String
     let fiveHourText: String
+    /// The weekly limit, or the Fable one on plans (Team) that report no all-model weekly limit.
     let weeklyText: String
+    let weeklyIsFable: Bool
+
+    var weeklyAccessibilityName: String {
+        weeklyIsFable ? "Fable weekly" : "weekly"
+    }
 }
 
 struct StatusItemCodexProfileState: Equatable, Sendable {
@@ -32,7 +38,8 @@ struct StatusItemPresentation: Equatable, Sendable {
     static let openRouterMark = "◑"
     static let staleIndicator = "•"
 
-    /// One column per signed-in Claude account, each stacking 5-hour over weekly remaining.
+    /// One column per signed-in Claude account, each stacking 5-hour over weekly remaining
+    /// (Fable weekly when the plan has no all-model weekly limit).
     let claudeProfiles: [StatusItemClaudeProfile]
     let codexProfiles: [StatusItemCodexProfile]
     /// nil when OpenRouter has no key or its balance could not be read; the label stays hidden then.
@@ -70,11 +77,15 @@ struct StatusItemPresentation: Equatable, Sendable {
         let codexContents = codexProfiles.map { Self.content(from: $0.state) }
 
         self.claudeProfiles = zip(claudeProfiles, claudeContents).map { profile, content in
-            StatusItemClaudeProfile(
+            let weeklyIsFable = content.snapshot?.weekly == nil && content.snapshot?.fableWeekly != nil
+            return StatusItemClaudeProfile(
                 profileID: profile.profileID,
                 name: profile.name,
                 fiveHourText: Self.label(value: content.snapshot?.fiveHour),
-                weeklyText: Self.label(value: content.snapshot?.weekly)
+                weeklyText: Self.label(
+                    value: weeklyIsFable ? content.snapshot?.fableWeekly : content.snapshot?.weekly
+                ),
+                weeklyIsFable: weeklyIsFable
             )
         }
         self.codexProfiles = zip(codexProfiles, codexContents).map { profile, content in

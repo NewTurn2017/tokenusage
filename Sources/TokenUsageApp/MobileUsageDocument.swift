@@ -10,6 +10,21 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
         public let remaining: String
         public let reset: String
         public let pace: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case label, percent, remaining, reset, pace
+        }
+
+        /// Writes a missing value as an explicit `null`; the synthesized encoder drops the key,
+        /// which reaches the page as `undefined` and rendered as "undefined%".
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(label, forKey: .label)
+            try container.encode(percent, forKey: .percent)
+            try container.encode(remaining, forKey: .remaining)
+            try container.encode(reset, forKey: .reset)
+            try container.encode(pace, forKey: .pace)
+        }
     }
 
     public struct Coupon: Encodable, Equatable, Sendable {
@@ -22,7 +37,11 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
         public let active: Bool
         public let freshness: String
         public let fiveHour: Window
+        /// Always present, because pasted widgets read `weekly.percent` directly.
         public let weekly: Window
+        public let fable: Window?
+        /// What to draw, in order: 5-hour, then whichever weekly limits the plan reports.
+        public let windows: [Window]
         public let coupon: Coupon?
     }
 
@@ -47,7 +66,6 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
     public let status: String
     public let error: String?
     public let claude: [ClaudeAccount]
-    public let fableWeekly: Window
     public let codex: [CodexAccount]
     public let openRouter: OpenRouter?
 
@@ -63,6 +81,13 @@ extension AppViewModel {
     public func mobileUsageDocument() -> MobileUsageDocument {
         let claude: [MobileUsageDocument.ClaudeAccount]
         if claudeQuotaRows.isEmpty {
+            let fable = claudeFableWeekly.remainingFraction == nil ? nil : claudeFableWeekly
+            let windows = ClaudeProfileQuotaPresentation.displayedWindows(
+                fiveHour: claudeFiveHour,
+                weekly: claudeWeekly,
+                fable: fable,
+                reportsWeekly: claudeWeekly.remainingFraction != nil
+            )
             claude = [
                 MobileUsageDocument.ClaudeAccount(
                     name: "Claude",
@@ -70,6 +95,8 @@ extension AppViewModel {
                     freshness: "",
                     fiveHour: Self.mobileWindow(claudeFiveHour),
                     weekly: Self.mobileWindow(claudeWeekly),
+                    fable: fable.map(Self.mobileWindow),
+                    windows: windows.map(Self.mobileWindow),
                     coupon: claudeResetCoupon.map(Self.mobileCoupon)
                 ),
             ]
@@ -81,6 +108,8 @@ extension AppViewModel {
                     freshness: row.freshnessText,
                     fiveHour: Self.mobileWindow(row.fiveHour),
                     weekly: Self.mobileWindow(row.weekly),
+                    fable: row.fable.map(Self.mobileWindow),
+                    windows: row.windows.map(Self.mobileWindow),
                     coupon: row.resetCoupon.map(Self.mobileCoupon)
                 )
             }
@@ -131,7 +160,6 @@ extension AppViewModel {
             status: statusText,
             error: errorText,
             claude: claude,
-            fableWeekly: Self.mobileWindow(claudeFableWeekly),
             codex: codex,
             openRouter: openRouter
         )

@@ -38,7 +38,9 @@ final class PopoverVisualQATests: XCTestCase {
                 PopoverDesignSystem.Size.popoverWidth,
                 accuracy: 0.5
             )
-            XCTAssertLessThan(rendering.size.height, 800)
+            // Every Claude account is in view now, so the bound is the 14-inch laptop's visible
+            // height that PopoverAccountListLayoutTests holds the popover to.
+            XCTAssertLessThan(rendering.size.height, 1_085)
             XCTAssertGreaterThan(rendering.png.count, 10_000)
         }
         XCTAssertNotEqual(light.png, dark.png, "semantic colours must adapt to macOS appearance")
@@ -99,6 +101,77 @@ final class PopoverVisualQATests: XCTestCase {
                 + "dark=\(dark.size.width)x\(dark.size.height) "
                 + "common=\(common.size.width)x\(common.size.height) "
                 + "errors=\(errors.size.width)x\(errors.size.height)"
+        )
+    }
+
+    /// One Max account (5-hour, weekly, Fable) beside four Team Premium accounts, which report a
+    /// 5-hour and a Fable limit but no all-model weekly one.
+    func testRendersTeamAccountsWithFableInTheWeeklySlot() throws {
+        let snapshot = teamAccountSnapshot()
+        let rows = model(for: snapshot).claudeQuotaRows
+
+        XCTAssertEqual(rows.map { $0.windows.map(\.window) }, [
+            ["5시간", "주간", "Fable"],
+            ["5시간", "Fable"],
+            ["5시간", "Fable"],
+            ["5시간", "Fable"],
+            ["5시간", "Fable"],
+        ])
+        XCTAssertEqual(rows.map { $0.fable?.remaining }, [
+            "70% 남음", "61% 남음", "80% 남음", "55% 남음", "92% 남음",
+        ])
+        XCTAssertTrue(rows.allSatisfy { $0.fable?.reset.hasSuffix("초기화") == true })
+
+        let light = try render(snapshot: snapshot, appearance: try XCTUnwrap(NSAppearance(named: .aqua)))
+        let dark = try render(snapshot: snapshot, appearance: try XCTUnwrap(NSAppearance(named: .darkAqua)))
+        for rendering in [light, dark] {
+            XCTAssertEqual(rendering.size.width, PopoverDesignSystem.Size.popoverWidth, accuracy: 0.5)
+            XCTAssertGreaterThan(rendering.png.count, 10_000)
+        }
+
+        if let directory = ProcessInfo.processInfo.environment["TOKEN_USAGE_POPOVER_QA_DIRECTORY"] {
+            let output = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try light.png.write(
+                to: output.appendingPathComponent("tokenusage-popover-light-team.png"),
+                options: .atomic
+            )
+            try dark.png.write(
+                to: output.appendingPathComponent("tokenusage-popover-dark-team.png"),
+                options: .atomic
+            )
+        }
+        print("POPOVER_TEAM_QA light=\(light.size.width)x\(light.size.height)")
+    }
+
+    private func teamAccountSnapshot() -> AppUsageSnapshot {
+        let populated = manyAccountSnapshot()
+        let codexProfiles = Array(populated.codexProfiles.prefix(3))
+        let codexIDs = Set(codexProfiles.map(\.id))
+        let claudeProfiles = ["claude-2020", "claude1", "claude2", "claude3", "claude4"].map {
+            ClaudeProfileMetadata(id: $0, name: $0, emailAddress: "\($0)@example.com")
+        }
+        let fiveHour: [Double] = [96, 68, 78, 88, 91]
+        let fable: [Double] = [70, 61, 80, 55, 92]
+        return AppUsageSnapshot(
+            claude: .unavailable(message: "synthetic"),
+            codexUsage: populated.codexUsage.filter { codexIDs.contains($0.profileID) },
+            codexProfiles: codexProfiles,
+            activeCodexProfileID: codexProfiles.first?.id,
+            openRouter: populated.openRouter,
+            claudeUsage: claudeProfiles.enumerated().map { index, profile in
+                ClaudeProfileUsage(
+                    profileID: profile.id,
+                    state: .fresh(usage(
+                        fiveHour: fiveHour[index],
+                        weekly: index == 0 ? 54 : nil,
+                        fable: fable[index],
+                        couponCount: index == 0 ? 1 : nil
+                    ))
+                )
+            },
+            claudeProfiles: claudeProfiles,
+            activeClaudeProfileID: "claude1"
         )
     }
 
@@ -234,7 +307,7 @@ final class PopoverVisualQATests: XCTestCase {
 
     private func usage(
         fiveHour: Double?,
-        weekly: Double,
+        weekly: Double?,
         fable: Double?,
         couponCount: Int?,
         credits: CodexCredits? = nil
@@ -248,11 +321,13 @@ final class PopoverVisualQATests: XCTestCase {
                     windowDuration: QuotaWindowKind.fiveHour.duration
                 )
             },
-            weekly: QuotaWindow(
-                remainingPercent: weekly,
-                resetsAt: capturedAt.addingTimeInterval(5 * 24 * 60 * 60),
-                windowDuration: QuotaWindowKind.weekly.duration
-            ),
+            weekly: weekly.map {
+                QuotaWindow(
+                    remainingPercent: $0,
+                    resetsAt: capturedAt.addingTimeInterval(5 * 24 * 60 * 60),
+                    windowDuration: QuotaWindowKind.weekly.duration
+                )
+            },
             fableWeekly: fable.map {
                 QuotaWindow(
                     remainingPercent: $0,

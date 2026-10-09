@@ -17,6 +17,7 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
     case loginFailed
     case loginFailedWithStatus(Int32)
     case temporaryDirectoryFailed
+    case credentialHeldByAnotherAccount
 
     public var errorDescription: String? {
         switch self {
@@ -52,6 +53,8 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
             "Claude 로그인이 종료 코드 \(status) 로 실패했습니다."
         case .temporaryDirectoryFailed:
             "로그인용 임시 디렉터리를 만들지 못했습니다."
+        case .credentialHeldByAnotherAccount:
+            "이 계정에 다른 계정의 토큰이 저장되어 있습니다. 이 계정으로 새 로그인해 주세요."
         }
     }
 }
@@ -75,6 +78,10 @@ public actor ClaudeProfileManager {
     private let temporaryDirectory: URL
     private let profileID: @Sendable () -> String
     private let now: @Sendable () -> Date
+    /// Renewed credentials the Keychain refused to take. The renewal already spent the old
+    /// refresh token, so dropping the new one would sign the account out on its next renewal;
+    /// it is served from here and written again on every later read until the Keychain accepts it.
+    private var unsavedCredentials: [String: Data] = [:]
 
     public init(
         credentialStore: any CredentialStoring,
@@ -227,6 +234,7 @@ public actor ClaudeProfileManager {
         )
         do {
             try credentialStore.storeCredential(section, named: metadata.id)
+            unsavedCredentials[metadata.id] = nil
             var updated = profiles
             if let index = updated.firstIndex(where: { $0.id == metadata.id }) {
                 updated[index] = metadata
@@ -293,6 +301,15 @@ public actor ClaudeProfileManager {
         let liveProfile = profiles.first {
             Self.isSameAccount($0, accountUUID: identity.accountUUID, email: identity.email)
         }
+        // The config file names the account but the Keychain holds the token, and a Claude Code
+        // session still running on an older account can rewrite the config file. When another
+        // saved account already holds this very token the two disagree; trusting the file would
+        // file one account's token under another, so nothing is changed.
+        if let liveProfile,
+           let liveRefreshToken = (try? ClaudeCredentialEnvelope.token(in: section))?.refreshToken,
+           profile(holdingRefreshToken: liveRefreshToken, besides: liveProfile.id, in: profiles) != nil {
+            return
+        }
         if preferences.activeProfileID != liveProfile?.id {
             preferences.activeProfileID = liveProfile?.id
         }
@@ -301,7 +318,9 @@ public actor ClaudeProfileManager {
               (try? credentialStore.credential(named: liveProfile.id)) != section else {
             return
         }
-        try? credentialStore.storeCredential(section, named: liveProfile.id)
+        if (try? credentialStore.storeCredential(section, named: liveProfile.id)) != nil {
+            unsavedCredentials[liveProfile.id] = nil
+        }
     }
 
     // MARK: - Usage
@@ -327,6 +346,13 @@ public actor ClaudeProfileManager {
             }
             return token.accessToken
         }
+        // A token another saved account also holds was filed here by mistake: it would report the
+        // other account's usage, and renewing it would rotate that account's refresh token and
+        // sign it out wherever it is in use.
+        if let refreshToken = token.refreshToken,
+           profile(holdingRefreshToken: refreshToken, besides: id, in: try listProfiles()) != nil {
+            throw ClaudeProfileManagerError.credentialHeldByAnotherAccount
+        }
         guard token.isExpired(at: now()) else { return token.accessToken }
 
         let refreshed: ClaudeOAuthToken
@@ -341,7 +367,12 @@ public actor ClaudeProfileManager {
         }
 
         if let updated = try? ClaudeCredentialEnvelope.applying(refreshed, to: stored) {
-            try? credentialStore.storeCredential(updated, named: id)
+            do {
+                try credentialStore.storeCredential(updated, named: id)
+                unsavedCredentials[id] = nil
+            } catch {
+                unsavedCredentials[id] = updated
+            }
         }
         return refreshed.accessToken
     }
@@ -420,6 +451,7 @@ public actor ClaudeProfileManager {
         }
         do {
             try credentialStore.removeCredential(named: id)
+            unsavedCredentials[id] = nil
             try preferences.saveProfiles(profiles.filter { $0.id != id })
         } catch {
             throw ClaudeProfileManagerError.storageFailed
@@ -472,7 +504,29 @@ public actor ClaudeProfileManager {
         }
     }
 
+    private func profile(
+        holdingRefreshToken refreshToken: String,
+        besides id: String,
+        in profiles: [ClaudeProfileMetadata]
+    ) -> ClaudeProfileMetadata? {
+        profiles.first { profile in
+            guard profile.id != id,
+                  let stored = try? storedCredential(profile.id),
+                  let token = try? ClaudeCredentialEnvelope.token(in: stored)
+            else {
+                return false
+            }
+            return token.refreshToken == refreshToken
+        }
+    }
+
     private func storedCredential(_ id: String) throws -> Data? {
+        if let unsaved = unsavedCredentials[id] {
+            if (try? credentialStore.storeCredential(unsaved, named: id)) != nil {
+                unsavedCredentials[id] = nil
+            }
+            return unsaved
+        }
         do {
             return try credentialStore.credential(named: id)
         } catch {

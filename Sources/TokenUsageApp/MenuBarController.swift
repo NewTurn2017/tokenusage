@@ -985,12 +985,11 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     }
 
     /// `~/.claude.json`, honouring `CLAUDE_CONFIG_DIR` the same way the CLI does.
+    /// The default account's config file, the partner of the default Keychain item the app reads.
+    /// A `CLAUDE_CONFIG_DIR` inherited from the launching terminal is ignored on purpose: pairing
+    /// another directory's account with the default token once filed one account's token under
+    /// another account's name.
     static func claudeConfigFileURL(environment: [String: String]) -> URL {
-        if let configDirectory = environment["CLAUDE_CONFIG_DIR"], !configDirectory.isEmpty {
-            return URL(fileURLWithPath: configDirectory, isDirectory: true)
-                .appendingPathComponent(".claude.json", isDirectory: false)
-                .standardizedFileURL
-        }
         let home = environment["HOME"].flatMap {
             $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
         } ?? FileManager.default.homeDirectoryForCurrentUser

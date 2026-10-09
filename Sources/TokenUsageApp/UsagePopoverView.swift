@@ -195,12 +195,6 @@ private struct ClaudeQuotaSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Claude 계정 사용량")
                 .accessibilityIdentifier("claude-profile-quota-list")
-
-                CompactQuotaLine(
-                    presentation: model.claudeFableWeekly,
-                    provider: .claude,
-                    leadingSymbol: "wand.and.stars"
-                )
             }
 
             ClaudeProfileControls(model: model)
@@ -221,7 +215,7 @@ private struct ClaudeQuotaSection: View {
 
 enum ClaudeProfileQuotaListLayout {
     static let rowHeight = PopoverDesignSystem.Size.claudeAccountRowHeight
-    static let unscrolledRowLimit = 3
+    static let unscrolledRowLimit = 5
 
     static func maximumHeight(rowCount: Int) -> CGFloat {
         let rows = min(max(rowCount, 1), unscrolledRowLimit)
@@ -264,8 +258,9 @@ private struct ClaudeProfileQuotaRow: View {
                         .fixedSize()
                 }
                 HStack(alignment: .top, spacing: PopoverDesignSystem.Spacing.medium) {
-                    ClaudeWindowSummary(presentation: presentation.fiveHour)
-                    ClaudeWindowSummary(presentation: presentation.weekly)
+                    ForEach(presentation.windows, id: \.window) { window in
+                        ClaudeWindowSummary(presentation: window)
+                    }
                 }
             }
             .padding(.horizontal, PopoverDesignSystem.Spacing.small)
@@ -303,10 +298,14 @@ private struct ClaudeWindowSummary: View {
             HStack(alignment: .firstTextBaseline, spacing: PopoverDesignSystem.Spacing.xSmall) {
                 Text(presentation.window)
                     .foregroundStyle(PopoverDesignSystem.Palette.secondary)
-                Text(presentation.remaining)
+                    .lineLimit(1)
+                    .fixedSize()
+                Text(presentation.percentText)
                     .font(PopoverDesignSystem.Typography.metric)
                     .monospacedDigit()
                     .foregroundStyle(quotaColor)
+                    .lineLimit(1)
+                    .fixedSize()
                 Spacer(minLength: 0)
                 QuotaCue(presentation: presentation, provider: .claude)
             }
@@ -558,16 +557,10 @@ private struct OpenRouterQuotaSection: View {
 private struct CompactQuotaLine: View {
     let presentation: QuotaWindowPresentation
     let provider: PopoverDesignSystem.Provider
-    var leadingSymbol: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: PopoverDesignSystem.Spacing.xSmall) {
             HStack(alignment: .firstTextBaseline, spacing: PopoverDesignSystem.Spacing.small) {
-                if let leadingSymbol {
-                    Image(systemName: leadingSymbol)
-                        .foregroundStyle(provider.accent)
-                        .accessibilityHidden(true)
-                }
                 Text(presentation.window)
                     .font(PopoverDesignSystem.Typography.detail)
                     .foregroundStyle(PopoverDesignSystem.Palette.secondary)

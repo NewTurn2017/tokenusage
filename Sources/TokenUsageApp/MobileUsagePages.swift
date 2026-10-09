@@ -42,8 +42,7 @@ enum MobileUsagePages {
     .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
     .badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px;
       color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); white-space: nowrap; }
-    .windows { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
-    .windows.single { grid-template-columns: 1fr; }
+    .windows { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
     .label { color: var(--muted); font-size: 12px; }
     .pct { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .bar { height: 4px; background: var(--track); border-radius: 2px; overflow: hidden; margin: 3px 0; }
@@ -66,7 +65,7 @@ enum MobileUsagePages {
       return node;
     }
     function tone(percent) {
-      if (percent === null || percent === undefined) return "var(--track)";
+      if (percent == null) return "var(--track)";
       if (percent <= 10) return "var(--bad)";
       if (percent <= 30) return "var(--warn)";
       return "var(--good)";
@@ -76,7 +75,7 @@ enum MobileUsagePages {
       const head = el("div", "row");
       head.append(el("span", "label", w.label));
       box.append(head);
-      const pct = el("div", "pct", w.percent === null ? "--" : w.percent + "%");
+      const pct = el("div", "pct", w.percent == null ? "--" : w.percent + "%");
       pct.style.color = tone(w.percent);
       box.append(pct);
       const bar = el("div", "bar"); const fill = el("div");
@@ -93,7 +92,8 @@ enum MobileUsagePages {
       if (a.active) head.append(el("span", "badge", "사용 중"));
       if (a.freshness && a.freshness !== "최신") head.append(el("span", "meta stale", a.freshness));
       box.append(head);
-      const grid = el("div", windows.length > 1 ? "windows" : "windows single");
+      const grid = el("div", "windows");
+      grid.style.setProperty("--columns", windows.length);
       windows.forEach(w => grid.append(windowView(w)));
       box.append(grid);
       return box;
@@ -107,10 +107,7 @@ enum MobileUsagePages {
       const main = document.getElementById("main");
       main.replaceChildren();
       const claude = sectionView("Claude", "var(--claude)");
-      d.claude.forEach(a => claude.append(accountView(a, [a.fiveHour, a.weekly])));
-      if (d.fableWeekly.percent !== null) {
-        const fable = el("div", "account"); fable.append(windowView(d.fableWeekly)); claude.append(fable);
-      }
+      d.claude.forEach(a => claude.append(accountView(a, a.windows || [a.fiveHour, a.weekly])));
       main.append(claude);
       const codex = sectionView("Codex", "var(--codex)");
       d.codex.forEach(a => codex.append(accountView(a, [a.weekly])));
@@ -173,12 +170,12 @@ enum MobileUsagePages {
     const PAGE = __PAGE__;
 
     function tone(p) {
-      if (p === null || p === undefined) return Color.gray();
+      if (p == null) return Color.gray();
       if (p <= 10) return Color.red();
       if (p <= 30) return Color.orange();
       return Color.green();
     }
-    function pct(p) { return p === null || p === undefined ? "--" : p + "%"; }
+    function pct(p) { return p == null ? "--" : p + "%"; }
 
     async function load() {
       const request = new Request(ENDPOINT);
@@ -210,9 +207,11 @@ enum MobileUsagePages {
       }
       const claude = d.claude.find(a => a.active) || d.claude[0];
       const codex = d.codex.find(a => a.active) || d.codex[0];
+      // Team plans have no all-model weekly limit; their second window is the Fable one.
+      const claudeWeek = (claude.windows && claude.windows[1]) || claude.weekly;
 
       if (accessory) {
-        const t = w.addText("C " + pct(claude.fiveHour.percent) + "/" + pct(claude.weekly.percent)
+        const t = w.addText("C " + pct(claude.fiveHour.percent) + "/" + pct(claudeWeek.percent)
           + "  X " + pct(codex.weekly.percent));
         t.font = Font.boldSystemFont(12);
         if (claude.coupon) w.addText("🎟 " + claude.coupon.text).font = Font.systemFont(10);
@@ -223,7 +222,7 @@ enum MobileUsagePages {
       const title = w.addText("Claude · " + claude.name + (claude.coupon ? "  🎟" + claude.coupon.text.replace("쿠폰 ", "") : ""));
       title.font = Font.semiboldSystemFont(size - 3); title.textColor = Color.orange(); title.lineLimit = 1;
       addLine(w, "5시간", pct(claude.fiveHour.percent), tone(claude.fiveHour.percent), size);
-      addLine(w, "주간", pct(claude.weekly.percent), tone(claude.weekly.percent), size);
+      addLine(w, claudeWeek.label, pct(claudeWeek.percent), tone(claudeWeek.percent), size);
       w.addSpacer(4);
       const codexTitle = w.addText("Codex · " + codex.name);
       codexTitle.font = Font.semiboldSystemFont(size - 3); codexTitle.textColor = Color.cyan(); codexTitle.lineLimit = 1;

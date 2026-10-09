@@ -159,6 +159,71 @@ final class MobileUsageServerTests: XCTestCase {
         XCTAssertFalse(json.contains("claude-1"), json)
     }
 
+    @MainActor
+    func testATeamAccountSendsItsFableLimitAndAnExplicitNullWeekly() throws {
+        let model = AppViewModel(coordinator: MobileNoopCoordinator(), profileActions: MobileNoopActions())
+        model.apply(.current(AppUsageSnapshot(
+            claude: .unavailable(message: ""),
+            codexUsage: [],
+            codexProfiles: [],
+            activeCodexProfileID: nil,
+            openRouter: .notConfigured(message: ""),
+            removedCodexProfileNames: [],
+            claudeUsage: [
+                ClaudeProfileUsage(profileID: "max", state: .fresh(UsageSnapshot(
+                    capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                    fiveHour: QuotaWindow(remainingPercent: 96, resetsAt: nil),
+                    weekly: QuotaWindow(remainingPercent: 54, resetsAt: nil),
+                    fableWeekly: QuotaWindow(remainingPercent: 70, resetsAt: nil)
+                ))),
+                ClaudeProfileUsage(profileID: "team", state: .fresh(UsageSnapshot(
+                    capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                    fiveHour: QuotaWindow(remainingPercent: 68, resetsAt: nil),
+                    fableWeekly: QuotaWindow(remainingPercent: 61, resetsAt: nil)
+                ))),
+            ],
+            claudeProfiles: [
+                ClaudeProfileMetadata(id: "max", name: "claude-2020"),
+                ClaudeProfileMetadata(id: "team", name: "claude1"),
+            ],
+            activeClaudeProfileID: "team"
+        )))
+
+        let document = model.mobileUsageDocument()
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try document.jsonData()) as? [String: Any]
+        )
+        let accounts = try XCTUnwrap(object["claude"] as? [[String: Any]])
+        let team = accounts[1]
+        let weekly = try XCTUnwrap(team["weekly"] as? [String: Any])
+
+        XCTAssertEqual(document.claude.map { $0.windows.map(\.label) }, [
+            ["5시간", "주간", "Fable"],
+            ["5시간", "Fable"],
+        ])
+        XCTAssertEqual(document.claude.map { $0.fable?.percent }, [70, 61])
+        // The page used to print "undefined%" because a nil percent dropped the key entirely.
+        XCTAssertTrue(weekly.keys.contains("percent"))
+        XCTAssertTrue(weekly["percent"] is NSNull)
+        XCTAssertNil(object["fableWeekly"], "Fable now travels with each account")
+
+        if let directory = ProcessInfo.processInfo.environment["TOKEN_USAGE_MOBILE_QA_DIRECTORY"] {
+            let output = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try document.jsonData().write(to: output.appendingPathComponent("usage.json"))
+            try Data(MobileUsagePages.html.utf8).write(to: output.appendingPathComponent("index.html"))
+        }
+    }
+
+    func testThePageAndWidgetTreatAMissingPercentAsUnknown() throws {
+        let page = MobileUsagePages.html
+        let widget = MobileUsagePages.widget(baseURL: baseURL, accessKey: key)
+
+        XCTAssertFalse(page.contains("percent === null"), "undefined must not slip past the check")
+        XCTAssertTrue(page.contains("a.windows ||"), "accounts draw the windows they report")
+        XCTAssertTrue(widget.contains("claude.windows[1]"), "the widget follows the weekly slot")
+    }
+
     private func makeRouter() -> MobileUsageRouter {
         MobileUsageRouter(accessKey: key, baseURL: baseURL) { Data(#"{"ok":true}"#.utf8) }
     }
