@@ -18,6 +18,8 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
     case loginFailedWithStatus(Int32)
     case temporaryDirectoryFailed
     case credentialHeldByAnotherAccount
+    case linkedCredentialExpired(String)
+    case linkedProfileInUse(String)
 
     public var errorDescription: String? {
         switch self {
@@ -55,6 +57,10 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
             "로그인용 임시 디렉터리를 만들지 못했습니다."
         case .credentialHeldByAnotherAccount:
             "이 계정에 다른 계정의 토큰이 저장되어 있습니다. 이 계정으로 새 로그인해 주세요."
+        case let .linkedCredentialExpired(name):
+            "\(name) 설정의 Claude Code 토큰이 만료되었습니다. \(name) 실행 후 다시 조회됩니다."
+        case let .linkedProfileInUse(name):
+            "이 계정은 \(name) 설정에서 쓰고 있어 기본 Claude Code로 전환하지 않습니다. \(name) 명령으로 실행해 주세요."
         }
     }
 }
@@ -76,12 +82,17 @@ public actor ClaudeProfileManager {
     private let loginRunner: (any ClaudeLoginRunning)?
     private let isolatedCredentials: any ClaudeIsolatedCredentialAccessing
     private let temporaryDirectory: URL
+    private let linkedConfigurationDirectories: @Sendable () -> [URL]
     private let profileID: @Sendable () -> String
     private let now: @Sendable () -> Date
     /// Renewed credentials the Keychain refused to take. The renewal already spent the old
     /// refresh token, so dropping the new one would sign the account out on its next renewal;
     /// it is served from here and written again on every later read until the Keychain accepts it.
     private var unsavedCredentials: [String: Data] = [:]
+    /// Accounts signed in under their own Claude Code configuration directory, by profile ID,
+    /// named after that directory. Claude Code renews their tokens there, so they are read from
+    /// it and never renewed here.
+    private var linkedProfiles: [String: String] = [:]
 
     public init(
         credentialStore: any CredentialStoring,
@@ -94,6 +105,7 @@ public actor ClaudeProfileManager {
         isolatedCredentials: any ClaudeIsolatedCredentialAccessing =
             SecurityCLIIsolatedClaudeCredentials(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        linkedConfigurationDirectories: @escaping @Sendable () -> [URL] = { [] },
         profileID: @escaping @Sendable () -> String = { UUID().uuidString },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
@@ -106,6 +118,7 @@ public actor ClaudeProfileManager {
         self.loginRunner = loginRunner
         self.isolatedCredentials = isolatedCredentials
         self.temporaryDirectory = temporaryDirectory
+        self.linkedConfigurationDirectories = linkedConfigurationDirectories
         self.profileID = profileID
         self.now = now
     }
@@ -293,6 +306,11 @@ public actor ClaudeProfileManager {
     /// token over another's, so the live account is identified first and only its own profile is
     /// updated.
     public func syncActiveProfile() {
+        syncDefaultProfile()
+        syncLinkedProfiles()
+    }
+
+    private func syncDefaultProfile() {
         guard let section = try? currentOAuthSection() else { return }
         let identity = Self.identity(inConfigAccountJSON: try? configOperator.readAccountJSON())
         guard identity.accountUUID != nil || identity.email != nil else { return }
@@ -323,6 +341,63 @@ public actor ClaudeProfileManager {
         }
     }
 
+    /// Captures the accounts Claude Code is signed in as under other configuration directories
+    /// (`CLAUDE_CONFIG_DIR`). Each directory keeps its own Keychain item and renews it on its own,
+    /// rotating the refresh token; a copy kept here would stop working after the first renewal,
+    /// and renewing that copy would sign the directory out instead.
+    private func syncLinkedProfiles() {
+        let profiles = (try? preferences.profiles()) ?? []
+        var freshest: [String: (name: String, section: Data, expiresAt: Date)] = [:]
+        for directory in linkedConfigurationDirectories() {
+            let config = FileClaudeConfigOperator(
+                configFileURL: directory.appendingPathComponent(".claude.json", isDirectory: false)
+            )
+            let identity = Self.identity(inConfigAccountJSON: try? config.readAccountJSON())
+            guard identity.accountUUID != nil || identity.email != nil,
+                  let profile = profiles.first(where: {
+                      Self.isSameAccount($0, accountUUID: identity.accountUUID, email: identity.email)
+                  }),
+                  // The default Keychain item already speaks for the active account.
+                  profile.id != preferences.activeProfileID else {
+                continue
+            }
+            let service = ClaudeKeychainService.service(forConfigurationDirectory: directory)
+            guard let envelope = try? isolatedCredentials.readEnvelope(service: service),
+                  let section = try? ClaudeCredentialEnvelope.oauthSection(from: envelope),
+                  let token = try? ClaudeCredentialEnvelope.token(in: section) else {
+                continue
+            }
+            // Same guard as the default item: a token another saved account holds is not filed.
+            if let refreshToken = token.refreshToken,
+               self.profile(holdingRefreshToken: refreshToken, besides: profile.id, in: profiles) != nil {
+                continue
+            }
+            let expiresAt = token.expiresAt ?? .distantFuture
+            if let existing = freshest[profile.id], existing.expiresAt >= expiresAt { continue }
+            freshest[profile.id] = (directory.lastPathComponent, section, expiresAt)
+        }
+
+        linkedProfiles = freshest.mapValues(\.name)
+        for (id, linked) in freshest {
+            let stored = try? storedCredential(id)
+            guard stored != linked.section else { continue }
+            // A directory left idle past its expiry would replace a copy that still answers; the
+            // copy is served until it lapses too, and is never renewed here either way.
+            if linked.expiresAt <= now(),
+               let stored,
+               let storedToken = try? ClaudeCredentialEnvelope.token(in: stored),
+               !storedToken.isExpired(at: now(), leeway: 0) {
+                continue
+            }
+            do {
+                try credentialStore.storeCredential(linked.section, named: id)
+                unsavedCredentials[id] = nil
+            } catch {
+                unsavedCredentials[id] = linked.section
+            }
+        }
+    }
+
     // MARK: - Usage
 
     /// An access token usable against the usage API.
@@ -343,6 +418,12 @@ public actor ClaudeProfileManager {
         if id == preferences.activeProfileID {
             guard !token.isExpired(at: now(), leeway: 0) else {
                 throw ClaudeProfileManagerError.activeCredentialExpired
+            }
+            return token.accessToken
+        }
+        if let name = linkedProfiles[id] {
+            guard !token.isExpired(at: now(), leeway: 0) else {
+                throw ClaudeProfileManagerError.linkedCredentialExpired(name)
             }
             return token.accessToken
         }
@@ -385,6 +466,11 @@ public actor ClaudeProfileManager {
             throw ClaudeProfileManagerError.profileNotFound
         }
         syncActiveProfile()
+        // Installing a directory's token as the default one would leave two Keychain items with
+        // one refresh token; whichever renews first signs the other out.
+        if let name = linkedProfiles[id] {
+            throw ClaudeProfileManagerError.linkedProfileInUse(name)
+        }
         _ = try await accessToken(for: id)
         guard let candidate = try storedCredential(id) else {
             throw ClaudeProfileManagerError.credentialMissing
@@ -548,6 +634,23 @@ public actor ClaudeProfileManager {
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ClaudeProfileManagerError.invalidProfileName }
         return name
+    }
+
+    /// The Claude Code configuration directories under `root` (`~/.claude-profiles/ccN`), the
+    /// same ones the `tokenusage` CLI offers as launchers.
+    public static func configurationDirectories(under root: URL) -> [URL] {
+        let fileManager = FileManager.default
+        let children = (try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return children
+            .filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                    && fileManager.fileExists(atPath: $0.appendingPathComponent(".claude.json").path)
+            }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
     static func identity(

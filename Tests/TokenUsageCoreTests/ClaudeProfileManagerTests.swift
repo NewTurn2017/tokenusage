@@ -572,6 +572,199 @@ final class ClaudeProfileManagerTests: XCTestCase {
             "personal-token-renewed"
         )
     }
+    func testALinkedDirectoryServesItsOwnRenewedTokenWithoutRenewingTheStoredCopy() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        // The copy captured earlier: its refresh token was spent when Claude Code renewed it.
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-renewed-by-cc1"
+        )
+
+        await manager.syncActiveProfile()
+        let token = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(token, "work-token-renewed-by-cc1")
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+        let stored = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        XCTAssertEqual(
+            try ClaudeCredentialEnvelope.token(in: stored).refreshToken,
+            "work-token-renewed-by-cc1-refresh"
+        )
+        let storedRoot = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: stored) as? [String: Any]
+        )
+        XCTAssertNil(storedRoot["mcpOAuth"], "only the account section is captured")
+    }
+
+    func testAnExpiredLinkedTokenAsksForItsDirectoryInsteadOfRenewingIt() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+
+        await manager.syncActiveProfile()
+        do {
+            _ = try await manager.accessToken(for: work.id)
+            XCTFail("renewing cc1's token here would sign cc1 out")
+        } catch let error as ClaudeProfileManagerError {
+            XCTAssertEqual(error, .linkedCredentialExpired("cc1"))
+        }
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+    }
+
+    func testAnIdleDirectoryDoesNotReplaceAStoredCopyThatStillAnswers() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-still-valid",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_700_003_600_000
+        )
+        let workCredential = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1-idle",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+
+        await manager.syncActiveProfile()
+        let token = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(token, "work-token-still-valid")
+        XCTAssertEqual(try fixture.credentials.credential(named: work.id), workCredential)
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+        do {
+            try await manager.activateProfile(id: work.id)
+            XCTFail("the account still belongs to cc1")
+        } catch let error as ClaudeProfileManagerError {
+            XCTAssertEqual(error, .linkedProfileInUse("cc1"))
+        }
+    }
+
+    func testALinkedDirectoryHoldingAnotherAccountsTokenIsNotFiled() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager()
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token",
+            email: "work@example.com"
+        )
+        let workCredential = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        // cc1's config names work, but its Keychain item holds personal's token.
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "personal-token",
+            refreshToken: "refresh"
+        )
+
+        await manager.syncActiveProfile()
+
+        XCTAssertEqual(try fixture.credentials.credential(named: work.id), workCredential)
+        let token = try await manager.accessToken(for: work.id)
+        XCTAssertEqual(token, "work-token")
+    }
+
+    func testTheActiveAccountKeepsTheDefaultTokenEvenWhenADirectoryAlsoSignsItIn() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager()
+        let personal = try await manager.saveCurrent(named: "personal")
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "personal@example.com",
+            accountUUID: "personal-uuid",
+            accessToken: "personal-token-cc1"
+        )
+
+        await manager.syncActiveProfile()
+
+        let token = try await manager.accessToken(for: personal.id)
+        XCTAssertEqual(token, "personal-token")
+    }
+
+    func testALinkedAccountIsNotInstalledAsTheDefaultOne() async throws {
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager()
+        let personal = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token",
+            email: "work@example.com"
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1"
+        )
+        let live = fixture.liveCredential.current
+        fixture.authStatus.setAccount(ClaudeAccount(email: "work@example.com"))
+
+        do {
+            try await manager.activateProfile(id: work.id)
+            XCTFail("two Keychain items sharing one refresh token sign each other out")
+        } catch let error as ClaudeProfileManagerError {
+            XCTAssertEqual(error, .linkedProfileInUse("cc1"))
+        }
+        XCTAssertEqual(fixture.liveCredential.current, live)
+        let activeProfileID = await manager.activeProfileID()
+        XCTAssertEqual(activeProfileID, personal.id)
+    }
+
+    func testConfigurationDirectoriesListsOnlySignedInDirectoriesInNaturalOrder() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TokenUsage-ClaudeDirs-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["cc10", "cc2", "empty"] {
+            let directory = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if name != "empty" {
+                try Data("{}".utf8).write(to: directory.appendingPathComponent(".claude.json"))
+            }
+        }
+        try Data().write(to: root.appendingPathComponent("stray-file"))
+
+        let directories = ClaudeProfileManager.configurationDirectories(under: root)
+
+        XCTAssertEqual(directories.map(\.lastPathComponent), ["cc2", "cc10"])
+        XCTAssertEqual(
+            ClaudeProfileManager.configurationDirectories(
+                under: root.appendingPathComponent("missing")
+            ),
+            []
+        )
+    }
 }
 
 private final class IDCounter: @unchecked Sendable {
@@ -596,6 +789,7 @@ private final class Fixture {
     var loginRunner = FakeClaudeLoginRunner()
     let isolatedCredentials = MemoryIsolatedClaudeCredentials()
     let temporaryDirectory: URL
+    private let linkedDirectories = LinkedDirectories()
     private let issuedIDs = IDCounter()
 
     init(liveAccessToken: String, expiresAtMilliseconds: Int64 = 4_102_444_800_000) {
@@ -640,6 +834,7 @@ private final class Fixture {
             loginRunner: withLoginRunner ? loginRunner : nil,
             isolatedCredentials: isolatedCredentials,
             temporaryDirectory: temporaryDirectory,
+            linkedConfigurationDirectories: { [linkedDirectories] in linkedDirectories.all },
             profileID: { [issuedIDs] in "profile-\(issuedIDs.next())" },
             now: now
         )
@@ -691,6 +886,35 @@ private final class Fixture {
         )
     }
 
+    /// Reproduces a `CLAUDE_CONFIG_DIR` launcher such as `cc1`: its own config file and its own
+    /// Keychain item, which Claude Code renews there.
+    func plantLinkedDirectory(
+        _ name: String,
+        email: String,
+        accountUUID: String,
+        accessToken: String,
+        refreshToken: String? = nil,
+        expiresAtMilliseconds: Int64 = 4_102_444_800_000
+    ) throws {
+        let directory = temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let config: [String: Any] = [
+            "oauthAccount": ["accountUuid": accountUUID, "emailAddress": email],
+        ]
+        try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]).write(
+            to: directory.appendingPathComponent(".claude.json")
+        )
+        isolatedCredentials.plant(
+            ClaudeCredentialFixture.envelope(
+                accessToken: accessToken,
+                refreshToken: refreshToken ?? "\(accessToken)-refresh",
+                expiresAtMilliseconds: expiresAtMilliseconds
+            ),
+            service: ClaudeKeychainService.service(forConfigurationDirectory: directory)
+        )
+        linkedDirectories.append(directory)
+    }
+
     /// Adds a second account the way a user would: sign in elsewhere, then capture it.
     func addStoredProfile(
         name: String,
@@ -718,5 +942,18 @@ private final class Fixture {
         )
         try preferences.saveProfiles(preferences.profiles() + [metadata])
         return metadata
+    }
+}
+
+private final class LinkedDirectories: @unchecked Sendable {
+    private let lock = NSLock()
+    private var directories: [URL] = []
+
+    func append(_ directory: URL) {
+        lock.withLock { directories.append(directory) }
+    }
+
+    var all: [URL] {
+        lock.withLock { directories }
     }
 }

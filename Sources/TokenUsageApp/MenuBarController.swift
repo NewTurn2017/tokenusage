@@ -930,7 +930,10 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             loginRunner: SystemClaudeLoginRunner(
                 environment: environment,
                 attemptController: loginAttemptController
-            )
+            ),
+            linkedConfigurationDirectories: { [root = Self.claudeProfilesRoot(environment: environment)] in
+                ClaudeProfileManager.configurationDirectories(under: root)
+            }
         )
         let service = ProductionAppService(
             claudeClient: claudeClient,
@@ -994,6 +997,18 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
         } ?? FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".claude.json", isDirectory: false).standardizedFileURL
+    }
+
+    /// `~/.claude-profiles`, where each `ccN` launcher keeps its own `CLAUDE_CONFIG_DIR`.
+    /// `TOKEN_USAGE_CLAUDE_PROFILES` overrides it, as it does for the `tokenusage` CLI.
+    static func claudeProfilesRoot(environment: [String: String]) -> URL {
+        if let override = environment["TOKEN_USAGE_CLAUDE_PROFILES"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+        }
+        let home = environment["HOME"].flatMap {
+            $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".claude-profiles", isDirectory: true).standardizedFileURL
     }
 
     static func runCompositionSmoke(environment: [String: String]) async -> Never {
