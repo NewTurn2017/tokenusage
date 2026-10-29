@@ -22,9 +22,13 @@ public enum ClaudeKeychainService {
     }
 }
 
-/// Reads and discards the Keychain item behind a throwaway sign-in.
+/// Reads, renews and discards the Keychain item Claude Code keeps for a configuration directory
+/// other than the default one.
 public protocol ClaudeIsolatedCredentialAccessing: Sendable {
     func readEnvelope(service: String) throws -> Data?
+    /// Replaces the item only while it still holds `expected`, the way the default item is
+    /// replaced on a switch.
+    func replaceEnvelope(service: String, with data: Data, ifCurrentMatches expected: Data?) throws
     func remove(service: String) throws
 }
 
@@ -58,6 +62,19 @@ public struct SecurityCLIIsolatedClaudeCredentials: ClaudeIsolatedCredentialAcce
             service: service,
             account: account
         ).readEnvelope()
+    }
+
+    public func replaceEnvelope(
+        service: String,
+        with data: Data,
+        ifCurrentMatches expected: Data?
+    ) throws {
+        try SecurityCLIClaudeLiveCredentialOperator(
+            runner: runner,
+            writer: writer,
+            service: service,
+            account: account
+        ).replaceEnvelope(with: data, ifCurrentMatches: expected)
     }
 
     public func remove(service: String) throws {

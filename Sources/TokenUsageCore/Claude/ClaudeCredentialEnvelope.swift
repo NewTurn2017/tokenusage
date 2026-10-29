@@ -30,17 +30,21 @@ public struct ClaudeOAuthToken: Equatable, Sendable {
     public let refreshToken: String?
     public let expiresAt: Date?
     public let subscriptionType: String?
+    /// Set only by a renewal whose reply states it; Claude Code keeps it next to `expiresAt`.
+    public let refreshTokenExpiresAt: Date?
 
     public init(
         accessToken: String,
         refreshToken: String? = nil,
         expiresAt: Date? = nil,
-        subscriptionType: String? = nil
+        subscriptionType: String? = nil,
+        refreshTokenExpiresAt: Date? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.subscriptionType = subscriptionType
+        self.refreshTokenExpiresAt = refreshTokenExpiresAt
     }
 
     /// Treats a token that expires within `leeway` as already expired, so a refresh happens
@@ -111,6 +115,11 @@ public enum ClaudeCredentialEnvelope {
         }
         if let subscriptionType = token.subscriptionType {
             section["subscriptionType"] = subscriptionType
+        }
+        if let refreshTokenExpiresAt = token.refreshTokenExpiresAt {
+            section["refreshTokenExpiresAt"] = NSNumber(
+                value: Int64((refreshTokenExpiresAt.timeIntervalSince1970 * 1_000).rounded())
+            )
         }
         return try canonicalData(section)
     }

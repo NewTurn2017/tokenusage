@@ -62,7 +62,9 @@ public struct ClaudeOAuthRefresher: ClaudeOAuthRefreshing, Sendable {
             throw ClaudeOAuthRefreshError.refreshTokenMissing
         }
 
-        var request = URLRequest(url: endpoint)
+        // Claude Code's own timeout; a renewal that outlived the refresh lock's one-minute
+        // staleness could be taken over by a Claude Code session mid-flight.
+        var request = URLRequest(url: endpoint, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
@@ -111,11 +113,15 @@ public struct ClaudeOAuthRefresher: ClaudeOAuthRefreshing, Sendable {
         } else {
             expiresAt = nil
         }
+        let refreshTokenExpiresAt = (root["refresh_token_expires_in"] as? NSNumber).map {
+            now().addingTimeInterval($0.doubleValue)
+        }
         return ClaudeOAuthToken(
             accessToken: accessToken,
             refreshToken: rotatedRefreshToken,
             expiresAt: expiresAt,
-            subscriptionType: (root["subscription_type"] as? String) ?? token.subscriptionType
+            subscriptionType: (root["subscription_type"] as? String) ?? token.subscriptionType,
+            refreshTokenExpiresAt: refreshTokenExpiresAt
         )
     }
 }

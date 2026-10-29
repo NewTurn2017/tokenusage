@@ -19,6 +19,7 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
     case temporaryDirectoryFailed
     case credentialHeldByAnotherAccount
     case linkedCredentialExpired(String)
+    case linkedSignedOut(String)
     case linkedProfileInUse(String)
 
     public var errorDescription: String? {
@@ -58,7 +59,9 @@ public enum ClaudeProfileManagerError: Error, Equatable, Sendable, LocalizedErro
         case .credentialHeldByAnotherAccount:
             "이 계정에 다른 계정의 토큰이 저장되어 있습니다. 이 계정으로 새 로그인해 주세요."
         case let .linkedCredentialExpired(name):
-            "\(name) 설정의 Claude Code 토큰이 만료되었습니다. \(name) 실행 후 다시 조회됩니다."
+            "\(name) 설정의 Claude Code 토큰이 만료되었습니다. 다음 조회 때 다시 갱신합니다."
+        case let .linkedSignedOut(name):
+            "\(name) 설정의 Claude Code 로그인이 만료되었습니다. \(name) 에서 /login 으로 다시 로그인해 주세요."
         case let .linkedProfileInUse(name):
             "이 계정은 \(name) 설정에서 쓰고 있어 기본 Claude Code로 전환하지 않습니다. \(name) 명령으로 실행해 주세요."
         }
@@ -81,6 +84,7 @@ public actor ClaudeProfileManager {
     private let refresher: any ClaudeOAuthRefreshing
     private let loginRunner: (any ClaudeLoginRunning)?
     private let isolatedCredentials: any ClaudeIsolatedCredentialAccessing
+    private let refreshLock: any ClaudeRefreshLocking
     private let temporaryDirectory: URL
     private let linkedConfigurationDirectories: @Sendable () -> [URL]
     private let profileID: @Sendable () -> String
@@ -89,10 +93,19 @@ public actor ClaudeProfileManager {
     /// refresh token, so dropping the new one would sign the account out on its next renewal;
     /// it is served from here and written again on every later read until the Keychain accepts it.
     private var unsavedCredentials: [String: Data] = [:]
-    /// Accounts signed in under their own Claude Code configuration directory, by profile ID,
-    /// named after that directory. Claude Code renews their tokens there, so they are read from
-    /// it and never renewed here.
-    private var linkedProfiles: [String: String] = [:]
+    /// Accounts signed in under their own Claude Code configuration directory, by profile ID.
+    /// Their tokens live in that directory's Keychain item and are renewed only there - by Claude
+    /// Code, or by this app under Claude Code's own refresh lock - never in a copy kept here.
+    private var linkedProfiles: [String: LinkedProfile] = [:]
+    /// Renewals a directory's Keychain item refused, by Keychain service, with the envelope they
+    /// replace. The renewal already spent the item's refresh token, so the rotated one is written
+    /// again on every later sync until the item takes it or something else replaces it.
+    private var unsavedDirectoryEnvelopes: [String: (expected: Data, replacement: Data)] = [:]
+
+    private struct LinkedProfile {
+        let name: String
+        let directory: URL
+    }
 
     public init(
         credentialStore: any CredentialStoring,
@@ -104,6 +117,7 @@ public actor ClaudeProfileManager {
         loginRunner: (any ClaudeLoginRunning)? = nil,
         isolatedCredentials: any ClaudeIsolatedCredentialAccessing =
             SecurityCLIIsolatedClaudeCredentials(),
+        refreshLock: any ClaudeRefreshLocking = DirectoryClaudeRefreshLock(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         linkedConfigurationDirectories: @escaping @Sendable () -> [URL] = { [] },
         profileID: @escaping @Sendable () -> String = { UUID().uuidString },
@@ -117,6 +131,7 @@ public actor ClaudeProfileManager {
         self.refresher = refresher
         self.loginRunner = loginRunner
         self.isolatedCredentials = isolatedCredentials
+        self.refreshLock = refreshLock
         self.temporaryDirectory = temporaryDirectory
         self.linkedConfigurationDirectories = linkedConfigurationDirectories
         self.profileID = profileID
@@ -342,12 +357,12 @@ public actor ClaudeProfileManager {
     }
 
     /// Captures the accounts Claude Code is signed in as under other configuration directories
-    /// (`CLAUDE_CONFIG_DIR`). Each directory keeps its own Keychain item and renews it on its own,
-    /// rotating the refresh token; a copy kept here would stop working after the first renewal,
+    /// (`CLAUDE_CONFIG_DIR`). Each directory keeps its own Keychain item, and every renewal
+    /// rotates the refresh token; a copy kept here would stop working after the first renewal,
     /// and renewing that copy would sign the directory out instead.
     private func syncLinkedProfiles() {
         let profiles = (try? preferences.profiles()) ?? []
-        var freshest: [String: (name: String, section: Data, expiresAt: Date)] = [:]
+        var freshest: [String: (directory: URL, section: Data, expiresAt: Date)] = [:]
         for directory in linkedConfigurationDirectories() {
             let config = FileClaudeConfigOperator(
                 configFileURL: directory.appendingPathComponent(".claude.json", isDirectory: false)
@@ -362,6 +377,11 @@ public actor ClaudeProfileManager {
                 continue
             }
             let service = ClaudeKeychainService.service(forConfigurationDirectory: directory)
+            if unsavedDirectoryEnvelopes[service] != nil,
+               let lease = refreshLock.acquire(configurationDirectory: directory) {
+                retryUnsavedDirectoryEnvelope(service: service)
+                lease.release()
+            }
             guard let envelope = try? isolatedCredentials.readEnvelope(service: service),
                   let section = try? ClaudeCredentialEnvelope.oauthSection(from: envelope),
                   let token = try? ClaudeCredentialEnvelope.token(in: section) else {
@@ -374,10 +394,12 @@ public actor ClaudeProfileManager {
             }
             let expiresAt = token.expiresAt ?? .distantFuture
             if let existing = freshest[profile.id], existing.expiresAt >= expiresAt { continue }
-            freshest[profile.id] = (directory.lastPathComponent, section, expiresAt)
+            freshest[profile.id] = (directory, section, expiresAt)
         }
 
-        linkedProfiles = freshest.mapValues(\.name)
+        linkedProfiles = freshest.mapValues {
+            LinkedProfile(name: $0.directory.lastPathComponent, directory: $0.directory)
+        }
         for (id, linked) in freshest {
             let stored = try? storedCredential(id)
             guard stored != linked.section else { continue }
@@ -402,8 +424,10 @@ public actor ClaudeProfileManager {
 
     /// An access token usable against the usage API.
     ///
-    /// Only inactive accounts are renewed here: Claude Code owns the token of the account it is
-    /// signed in as, and a refresh token rotated behind its back would sign it out.
+    /// The account Claude Code is signed in as by default is never renewed here: Claude Code owns
+    /// that token, and a refresh token rotated behind its back would sign it out. An account
+    /// signed in under its own configuration directory is renewed in that directory's Keychain
+    /// item, so the directory picks up the rotated refresh token too.
     public func accessToken(for id: String) async throws -> String {
         guard let stored = try storedCredential(id) else {
             throw ClaudeProfileManagerError.credentialMissing
@@ -421,11 +445,9 @@ public actor ClaudeProfileManager {
             }
             return token.accessToken
         }
-        if let name = linkedProfiles[id] {
-            guard !token.isExpired(at: now(), leeway: 0) else {
-                throw ClaudeProfileManagerError.linkedCredentialExpired(name)
-            }
-            return token.accessToken
+        if let linked = linkedProfiles[id] {
+            guard token.isExpired(at: now()) else { return token.accessToken }
+            return try await renewLinkedCredential(id: id, linked: linked, stored: token)
         }
         // A token another saved account also holds was filed here by mistake: it would report the
         // other account's usage, and renewing it would rotate that account's refresh token and
@@ -458,6 +480,110 @@ public actor ClaudeProfileManager {
         return refreshed.accessToken
     }
 
+    /// Renews a directory's token the way another Claude Code process in that directory would:
+    /// under Claude Code's refresh lock, from the directory's own Keychain item read again inside
+    /// it, and written back there. A directory nobody runs stays fresh, and a session that is
+    /// running adopts the rotated token the next time it takes the lock.
+    private func renewLinkedCredential(
+        id: String,
+        linked: LinkedProfile,
+        stored: ClaudeOAuthToken
+    ) async throws -> String {
+        guard let lease = refreshLock.acquire(configurationDirectory: linked.directory) else {
+            return try usableLinkedToken(stored, in: linked)
+        }
+        defer { lease.release() }
+
+        let service = ClaudeKeychainService.service(forConfigurationDirectory: linked.directory)
+        retryUnsavedDirectoryEnvelope(service: service)
+        // The item still holds a refresh token the last renewal spent.
+        guard unsavedDirectoryEnvelopes[service] == nil,
+              let envelope = try? isolatedCredentials.readEnvelope(service: service),
+              let section = try? ClaudeCredentialEnvelope.oauthSection(from: envelope),
+              let current = try? ClaudeCredentialEnvelope.token(in: section),
+              current.refreshToken.map({
+                  profile(holdingRefreshToken: $0, besides: id, in: (try? listProfiles()) ?? [])
+                      == nil
+              }) ?? false
+        else {
+            return try usableLinkedToken(stored, in: linked)
+        }
+        // A Claude Code session in the directory renewed it since the last sync.
+        guard current.isExpired(at: now()) else {
+            fileLinkedCredential(section, id: id)
+            return current.accessToken
+        }
+
+        let refreshed: ClaudeOAuthToken
+        do {
+            // Left to finish even if this refresh is cancelled: once sent, the renewal spends
+            // the directory's refresh token, and dropping the reply would sign the directory out.
+            refreshed = try await Task { [refresher] in
+                try await refresher.refresh(current)
+            }.value
+        } catch ClaudeOAuthRefreshError.rejected {
+            throw ClaudeProfileManagerError.linkedSignedOut(linked.name)
+        } catch {
+            return try usableLinkedToken(stored, in: linked)
+        }
+
+        let renewedSection: Data
+        let renewedEnvelope: Data
+        do {
+            renewedSection = try ClaudeCredentialEnvelope.applying(refreshed, to: section)
+            renewedEnvelope = try ClaudeCredentialEnvelope.merging(
+                oauthSection: renewedSection,
+                into: envelope
+            )
+        } catch {
+            throw ClaudeProfileManagerError.storageFailed
+        }
+        do {
+            try isolatedCredentials.replaceEnvelope(
+                service: service,
+                with: renewedEnvelope,
+                ifCurrentMatches: envelope
+            )
+        } catch {
+            unsavedDirectoryEnvelopes[service] = (envelope, renewedEnvelope)
+        }
+        fileLinkedCredential(renewedSection, id: id)
+        return refreshed.accessToken
+    }
+
+    /// Serves the token in hand while it still answers; the renewal is tried again next time.
+    private func usableLinkedToken(_ token: ClaudeOAuthToken, in linked: LinkedProfile) throws -> String {
+        guard !token.isExpired(at: now(), leeway: 0) else {
+            throw ClaudeProfileManagerError.linkedCredentialExpired(linked.name)
+        }
+        return token.accessToken
+    }
+
+    private func fileLinkedCredential(_ section: Data, id: String) {
+        do {
+            try credentialStore.storeCredential(section, named: id)
+            unsavedCredentials[id] = nil
+        } catch {
+            unsavedCredentials[id] = section
+        }
+    }
+
+    /// Callers hold the directory's refresh lock.
+    private func retryUnsavedDirectoryEnvelope(service: String) {
+        guard let unsaved = unsavedDirectoryEnvelopes[service] else { return }
+        do {
+            try isolatedCredentials.replaceEnvelope(
+                service: service,
+                with: unsaved.replacement,
+                ifCurrentMatches: unsaved.expected
+            )
+            unsavedDirectoryEnvelopes[service] = nil
+        } catch ClaudeLiveCredentialError.conflict {
+            // Claude Code signed the directory in again, or the write did land after all.
+            unsavedDirectoryEnvelopes[service] = nil
+        } catch {}
+    }
+
     // MARK: - Switching
 
     public func activateProfile(id: String) async throws {
@@ -468,8 +594,8 @@ public actor ClaudeProfileManager {
         syncActiveProfile()
         // Installing a directory's token as the default one would leave two Keychain items with
         // one refresh token; whichever renews first signs the other out.
-        if let name = linkedProfiles[id] {
-            throw ClaudeProfileManagerError.linkedProfileInUse(name)
+        if let linked = linkedProfiles[id] {
+            throw ClaudeProfileManagerError.linkedProfileInUse(linked.name)
         }
         _ = try await accessToken(for: id)
         guard let candidate = try storedCredential(id) else {

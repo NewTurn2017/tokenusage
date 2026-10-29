@@ -607,9 +607,128 @@ final class ClaudeProfileManagerTests: XCTestCase {
         XCTAssertNil(storedRoot["mcpOAuth"], "only the account section is captured")
     }
 
-    func testAnExpiredLinkedTokenAsksForItsDirectoryInsteadOfRenewingIt() async throws {
+    func testAnExpiredLinkedTokenIsRenewedInItsDirectorysOwnKeychainItem() async throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let fixture = Fixture(liveAccessToken: "personal-token")
+        fixture.refresher = FakeClaudeOAuthRefresher(replacement: ClaudeOAuthToken(
+            accessToken: "work-token-renewed",
+            refreshToken: "work-refresh-rotated",
+            expiresAt: Date(timeIntervalSince1970: 1_700_028_800),
+            refreshTokenExpiresAt: Date(timeIntervalSince1970: 1_702_592_000)
+        ))
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+
+        await manager.syncActiveProfile()
+        let token = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(token, "work-token-renewed")
+        XCTAssertEqual(fixture.refresher.callCount, 1)
+        // cc1 reads the rotated refresh token from its own item; its MCP tokens stay put.
+        let directoryRoot = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: try XCTUnwrap(fixture.linkedEnvelope("cc1"))
+        ) as? [String: Any])
+        let directoryAccount = try XCTUnwrap(directoryRoot["claudeAiOauth"] as? [String: Any])
+        XCTAssertEqual(directoryAccount["accessToken"] as? String, "work-token-renewed")
+        XCTAssertEqual(directoryAccount["refreshToken"] as? String, "work-refresh-rotated")
+        XCTAssertEqual((directoryAccount["expiresAt"] as? NSNumber)?.int64Value, 1_700_028_800_000)
+        XCTAssertEqual(
+            (directoryAccount["refreshTokenExpiresAt"] as? NSNumber)?.int64Value,
+            1_702_592_000_000
+        )
+        XCTAssertNotNil(directoryRoot["mcpOAuth"])
+        let stored = try XCTUnwrap(fixture.credentials.credential(named: work.id))
+        XCTAssertEqual(
+            try ClaudeCredentialEnvelope.token(in: stored).refreshToken,
+            "work-refresh-rotated"
+        )
+        XCTAssertFalse(fixture.holdsRefreshLock("cc1"), "the lock is released after the renewal")
+    }
+
+    func testALinkedRenewalWaitsWhileClaudeCodeHoldsTheRefreshLock() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+        let envelope = fixture.linkedEnvelope("cc1")
+        try fixture.takeRefreshLock("cc1")
+
+        await manager.syncActiveProfile()
+        do {
+            _ = try await manager.accessToken(for: work.id)
+            XCTFail("a Claude Code session in cc1 is renewing it right now")
+        } catch let error as ClaudeProfileManagerError {
+            XCTAssertEqual(error, .linkedCredentialExpired("cc1"))
+        }
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+        XCTAssertEqual(fixture.linkedEnvelope("cc1"), envelope)
+        XCTAssertTrue(fixture.holdsRefreshLock("cc1"), "another process's lock is left alone")
+    }
+
+    func testALinkedRenewalAdoptsATokenClaudeCodeRenewedMeanwhile() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+        await manager.syncActiveProfile()
+        // A cc1 session renews between the sync and the usage read.
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-renewed-by-cc1"
+        )
+
+        let token = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(token, "work-token-renewed-by-cc1")
+        XCTAssertEqual(fixture.refresher.callCount, 0)
+        XCTAssertEqual(fixture.isolatedCredentials.writeCount, 0)
+    }
+
+    func testARejectedLinkedRenewalAsksToSignTheDirectoryInAgain() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        fixture.refresher.setFailure(ClaudeOAuthRefreshError.rejected)
         let manager = fixture.manager(now: { now })
         _ = try await manager.saveCurrent(named: "personal")
         let work = try fixture.addStoredProfile(
@@ -629,11 +748,55 @@ final class ClaudeProfileManagerTests: XCTestCase {
         await manager.syncActiveProfile()
         do {
             _ = try await manager.accessToken(for: work.id)
-            XCTFail("renewing cc1's token here would sign cc1 out")
+            XCTFail("cc1's refresh token no longer works")
         } catch let error as ClaudeProfileManagerError {
-            XCTAssertEqual(error, .linkedCredentialExpired("cc1"))
+            XCTAssertEqual(error, .linkedSignedOut("cc1"))
         }
-        XCTAssertEqual(fixture.refresher.callCount, 0)
+        XCTAssertFalse(fixture.holdsRefreshLock("cc1"))
+    }
+
+    func testALinkedRenewalTheKeychainRefusesIsWrittenOnTheNextSync() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixture = Fixture(liveAccessToken: "personal-token")
+        fixture.refresher = FakeClaudeOAuthRefresher(replacement: ClaudeOAuthToken(
+            accessToken: "work-token-renewed",
+            refreshToken: "work-refresh-rotated",
+            expiresAt: Date(timeIntervalSince1970: 1_700_028_800)
+        ))
+        let manager = fixture.manager(now: { now })
+        _ = try await manager.saveCurrent(named: "personal")
+        let work = try fixture.addStoredProfile(
+            name: "work",
+            accessToken: "work-token-old",
+            email: "work@example.com",
+            expiresAtMilliseconds: 1_699_999_000_000
+        )
+        try fixture.plantLinkedDirectory(
+            "cc1",
+            email: "work@example.com",
+            accountUUID: "work-uuid",
+            accessToken: "work-token-cc1",
+            expiresAtMilliseconds: 1_699_999_500_000
+        )
+        let spent = fixture.linkedEnvelope("cc1")
+        fixture.isolatedCredentials.setRefusesWrites(true)
+
+        await manager.syncActiveProfile()
+        let token = try await manager.accessToken(for: work.id)
+
+        XCTAssertEqual(token, "work-token-renewed")
+        XCTAssertEqual(fixture.linkedEnvelope("cc1"), spent)
+        XCTAssertEqual(fixture.refresher.callCount, 1)
+
+        fixture.isolatedCredentials.setRefusesWrites(false)
+        await manager.syncActiveProfile()
+
+        let account = try ClaudeCredentialEnvelope.token(
+            in: ClaudeCredentialEnvelope.oauthSection(from: try XCTUnwrap(fixture.linkedEnvelope("cc1")))
+        )
+        XCTAssertEqual(account.accessToken, "work-token-renewed")
+        XCTAssertEqual(account.refreshToken, "work-refresh-rotated")
+        XCTAssertFalse(fixture.holdsRefreshLock("cc1"))
     }
 
     func testAnIdleDirectoryDoesNotReplaceAStoredCopyThatStillAnswers() async throws {
@@ -913,6 +1076,30 @@ private final class Fixture {
             service: ClaudeKeychainService.service(forConfigurationDirectory: directory)
         )
         linkedDirectories.append(directory)
+    }
+
+    func linkedEnvelope(_ name: String) -> Data? {
+        let directory = temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+        return try? isolatedCredentials.readEnvelope(
+            service: ClaudeKeychainService.service(forConfigurationDirectory: directory)
+        )
+    }
+
+    /// Claude Code's refresh lock, as a session renewing in that directory holds it.
+    func takeRefreshLock(_ name: String) throws {
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory.appendingPathComponent("\(name)/.oauth_refresh.lock"),
+            withIntermediateDirectories: false
+        )
+    }
+
+    func holdsRefreshLock(_ name: String) -> Bool {
+        let fileManager = FileManager.default
+        return fileManager.fileExists(
+            atPath: temporaryDirectory.appendingPathComponent("\(name)/.oauth_refresh.lock").path
+        ) || fileManager.fileExists(
+            atPath: temporaryDirectory.appendingPathComponent("\(name).lock").path
+        )
     }
 
     /// Adds a second account the way a user would: sign in elsewhere, then capture it.

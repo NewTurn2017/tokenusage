@@ -209,13 +209,32 @@ final class MemoryIsolatedClaudeCredentials: ClaudeIsolatedCredentialAccessing, 
     private let lock = NSLock()
     private var storage: [String: Data] = [:]
     private var removed: [String] = []
+    private var refusesWrites = false
+    private var writes = 0
 
     func plant(_ envelope: Data, service: String) {
         lock.withLock { storage[service] = envelope }
     }
 
+    func setRefusesWrites(_ refuses: Bool) {
+        lock.withLock { refusesWrites = refuses }
+    }
+
     func readEnvelope(service: String) throws -> Data? {
         lock.withLock { storage[service] }
+    }
+
+    func replaceEnvelope(service: String, with data: Data, ifCurrentMatches expected: Data?) throws {
+        try lock.withLock {
+            guard storage[service] == expected else { throw ClaudeLiveCredentialError.conflict }
+            guard !refusesWrites else { throw ClaudeLiveCredentialError.writeFailed }
+            storage[service] = data
+            writes += 1
+        }
+    }
+
+    var writeCount: Int {
+        lock.withLock { writes }
     }
 
     func remove(service: String) throws {
