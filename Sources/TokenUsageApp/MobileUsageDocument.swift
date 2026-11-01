@@ -40,7 +40,8 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
         /// Always present, because pasted widgets read `weekly.percent` directly.
         public let weekly: Window
         public let fable: Window?
-        /// What to draw, in order: 5-hour, then whichever weekly limits the plan reports.
+        /// What to draw, in order: 5-hour (left out on plans without one, such as Ultra), then
+        /// whichever weekly limits the plan reports.
         public let windows: [Window]
         public let coupon: Coupon?
     }
@@ -86,6 +87,7 @@ extension AppViewModel {
                 fiveHour: claudeFiveHour,
                 weekly: claudeWeekly,
                 fable: fable,
+                reportsFiveHour: claudeFiveHour.remainingFraction != nil,
                 reportsWeekly: claudeWeekly.remainingFraction != nil
             )
             claude = [

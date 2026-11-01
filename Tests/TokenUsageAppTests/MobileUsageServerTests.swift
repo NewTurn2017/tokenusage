@@ -221,7 +221,12 @@ final class MobileUsageServerTests: XCTestCase {
 
         XCTAssertFalse(page.contains("percent === null"), "undefined must not slip past the check")
         XCTAssertTrue(page.contains("a.windows ||"), "accounts draw the windows they report")
-        XCTAssertTrue(widget.contains("claude.windows[1]"), "the widget follows the weekly slot")
+        // Pro/Max: 5-hour and weekly; Team: 5-hour and Fable; Ultra: weekly and Fable.
+        XCTAssertTrue(
+            widget.contains("? claude.windows") && widget.contains(".slice(0, 2)"),
+            "the widget draws the first two limits the plan reports"
+        )
+        XCTAssertFalse(widget.contains("claude.fiveHour.percent"), "no 5-hour line is forced on Ultra")
     }
 
     private func makeRouter() -> MobileUsageRouter {

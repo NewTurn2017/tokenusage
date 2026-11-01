@@ -156,9 +156,11 @@ private struct ClaudeQuotaSection: View {
                     ClaudeCouponBadge(coupon: coupon, accessibilityIdentifier: "claude-reset-coupon")
                 }
                 Spacer(minLength: 0)
-                if !model.claudeProfiles.isEmpty {
+                // Accounts with their own `ccN` launcher can't become the default, so the picker
+                // shows only when there is another account to switch to.
+                if model.selectableClaudeProfiles.contains(where: { $0.id != model.selectedClaudeProfileID }) {
                     Picker("계정", selection: profileSelection) {
-                        ForEach(model.claudeProfiles, id: \.id) { profile in
+                        ForEach(model.selectableClaudeProfiles, id: \.id) { profile in
                             Text(profile.name).tag(Optional(profile.id))
                         }
                     }
@@ -179,9 +181,12 @@ private struct ClaudeQuotaSection: View {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: PopoverDesignSystem.Spacing.xxSmall) {
                         ForEach(model.claudeQuotaRows) { row in
-                            ClaudeProfileQuotaRow(presentation: row) {
-                                Task { await model.selectClaudeProfile(id: row.profileID) }
-                            }
+                            ClaudeProfileQuotaRow(
+                                presentation: row,
+                                activate: row.isSelectable && !row.isActive
+                                    ? { Task { await model.selectClaudeProfile(id: row.profileID) } }
+                                    : nil
+                            )
                             .disabled(model.isPerformingProfileAction)
                         }
                     }
@@ -226,67 +231,79 @@ enum ClaudeProfileQuotaListLayout {
 
 private struct ClaudeProfileQuotaRow: View {
     let presentation: ClaudeProfileQuotaPresentation
-    let activate: () -> Void
+    /// nil when pressing the row would switch nothing: the account is already the default, or
+    /// it runs from its own `ccN` directory.
+    let activate: (() -> Void)?
 
     var body: some View {
-        Button(action: activate) {
-            VStack(alignment: .leading, spacing: PopoverDesignSystem.Spacing.xSmall) {
-                HStack(spacing: PopoverDesignSystem.Spacing.small) {
-                    Text(presentation.name)
-                        .font(PopoverDesignSystem.Typography.section)
-                        .lineLimit(1)
-                        .layoutPriority(2)
-                    if let email = presentation.emailAddress {
-                        Text(email)
-                            .font(PopoverDesignSystem.Typography.detail)
-                            .foregroundStyle(PopoverDesignSystem.Palette.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 0)
-                    if let coupon = presentation.resetCoupon {
-                        ClaudeCouponBadge(
-                            coupon: coupon,
-                            accessibilityIdentifier: "claude-reset-coupon-\(presentation.profileID)"
-                        )
-                    }
-                    if presentation.isActive {
-                        ActiveBadge(provider: .claude)
-                    }
-                    // A coupon badge can crowd the header; the name truncates, not the freshness.
-                    FreshnessLabel(text: presentation.freshnessText)
-                        .fixedSize()
+        if let activate {
+            Button(action: activate) { content }
+                .buttonStyle(.plain)
+                .accessibilityRepresentation {
+                    Button(presentation.accessibilityLabel, action: activate)
+                        .accessibilityIdentifier(presentation.accessibilityIdentifier)
                 }
-                HStack(alignment: .top, spacing: PopoverDesignSystem.Spacing.medium) {
-                    ForEach(presentation.windows, id: \.window) { window in
-                        ClaudeWindowSummary(presentation: window)
-                    }
+        } else {
+            content
+                .accessibilityRepresentation {
+                    Text(presentation.accessibilityLabel)
+                        .accessibilityIdentifier(presentation.accessibilityIdentifier)
+                }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: PopoverDesignSystem.Spacing.xSmall) {
+            HStack(spacing: PopoverDesignSystem.Spacing.small) {
+                Text(presentation.name)
+                    .font(PopoverDesignSystem.Typography.section)
+                    .lineLimit(1)
+                    .layoutPriority(2)
+                if let email = presentation.emailAddress {
+                    Text(email)
+                        .font(PopoverDesignSystem.Typography.detail)
+                        .foregroundStyle(PopoverDesignSystem.Palette.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+                if let coupon = presentation.resetCoupon {
+                    ClaudeCouponBadge(
+                        coupon: coupon,
+                        accessibilityIdentifier: "claude-reset-coupon-\(presentation.profileID)"
+                    )
+                }
+                if presentation.isActive {
+                    ActiveBadge(provider: .claude)
+                }
+                // A coupon badge can crowd the header; the name truncates, not the freshness.
+                FreshnessLabel(text: presentation.freshnessText)
+                    .fixedSize()
+            }
+            HStack(alignment: .top, spacing: PopoverDesignSystem.Spacing.medium) {
+                ForEach(presentation.windows, id: \.window) { window in
+                    ClaudeWindowSummary(presentation: window)
                 }
             }
-            .padding(.horizontal, PopoverDesignSystem.Spacing.small)
-            .padding(.vertical, PopoverDesignSystem.Spacing.xSmall)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: ClaudeProfileQuotaListLayout.rowHeight)
-            .background(
-                RoundedRectangle(
-                    cornerRadius: PopoverDesignSystem.Radius.section,
-                    style: .continuous
-                )
-                .fill(
-                    presentation.isActive
-                        ? PopoverDesignSystem.Provider.claude.accent.opacity(
-                            PopoverDesignSystem.Opacity.activeFill
-                        )
-                        : PopoverDesignSystem.Palette.transparent
-                )
+        }
+        .padding(.horizontal, PopoverDesignSystem.Spacing.small)
+        .padding(.vertical, PopoverDesignSystem.Spacing.xSmall)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: ClaudeProfileQuotaListLayout.rowHeight)
+        .background(
+            RoundedRectangle(
+                cornerRadius: PopoverDesignSystem.Radius.section,
+                style: .continuous
             )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityRepresentation {
-            Button(presentation.accessibilityLabel, action: activate)
-                .accessibilityIdentifier(presentation.accessibilityIdentifier)
-        }
+            .fill(
+                presentation.isActive
+                    ? PopoverDesignSystem.Provider.claude.accent.opacity(
+                        PopoverDesignSystem.Opacity.activeFill
+                    )
+                    : PopoverDesignSystem.Palette.transparent
+            )
+        )
+        .contentShape(Rectangle())
     }
 }
 

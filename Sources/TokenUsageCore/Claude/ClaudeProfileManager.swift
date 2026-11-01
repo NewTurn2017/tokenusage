@@ -152,6 +152,12 @@ public actor ClaudeProfileManager {
         preferences.activeProfileID
     }
 
+    /// Accounts that run from their own `ccN` configuration directory, as of the last sync. They
+    /// can't become the default account (see `activateProfile`), so the app offers no switch to them.
+    public func linkedProfileIDs() -> Set<String> {
+        Set(linkedProfiles.keys)
+    }
+
     // MARK: - Capturing the signed-in account
 
     /// Captures whatever Claude Code is signed in as right now. Re-saving the same account

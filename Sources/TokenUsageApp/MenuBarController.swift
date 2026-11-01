@@ -384,6 +384,11 @@ protocol ClaudeProfileManaging: Sendable {
     func removeProfile(id: String) async throws
     func accessToken(for id: String) async throws -> String
     func syncActiveProfile() async
+    func linkedProfileIDs() async -> Set<String>
+}
+
+extension ClaudeProfileManaging {
+    func linkedProfileIDs() async -> Set<String> { [] }
 }
 
 extension ClaudeProfileManager: ClaudeProfileManaging {}
@@ -630,6 +635,7 @@ actor ProductionAppService: CodexProfileActionHandling, ClaudeProfileActionHandl
     ) async -> AppUsageSnapshot {
         let activeID = await profileManager.activeProfileID()
         let activeClaudeID = await claudeProfileManager?.activeProfileID()
+        let linkedClaudeIDs = await claudeProfileManager?.linkedProfileIDs() ?? []
         return AppUsageSnapshot(
             claude: claude,
             codexUsage: codex,
@@ -641,7 +647,8 @@ actor ProductionAppService: CodexProfileActionHandling, ClaudeProfileActionHandl
             claudeProfiles: claudeProfiles,
             activeClaudeProfileID: claudeProfiles.contains(where: { $0.id == activeClaudeID })
                 ? activeClaudeID
-                : nil
+                : nil,
+            linkedClaudeProfileIDs: linkedClaudeIDs
         )
     }
 

@@ -7,17 +7,30 @@ struct StatusItemClaudeProfileState: Equatable, Sendable {
     let state: UsageState
 }
 
+enum StatusItemClaudeWindow: Equatable, Sendable {
+    case fiveHour
+    case weekly
+    case fableWeekly
+
+    var accessibilityName: String {
+        switch self {
+        case .fiveHour: "five hour"
+        case .weekly: "weekly"
+        case .fableWeekly: "Fable weekly"
+        }
+    }
+}
+
+/// One account's column: the first two limits its plan reports. 5-hour over weekly on Pro and
+/// Max, 5-hour over Fable on Team (no all-model weekly limit), weekly over Fable on Ultra (no
+/// 5-hour limit).
 struct StatusItemClaudeProfile: Equatable, Sendable {
     let profileID: String
     let name: String
-    let fiveHourText: String
-    /// The weekly limit, or the Fable one on plans (Team) that report no all-model weekly limit.
-    let weeklyText: String
-    let weeklyIsFable: Bool
-
-    var weeklyAccessibilityName: String {
-        weeklyIsFable ? "Fable weekly" : "weekly"
-    }
+    let upperText: String
+    let upperWindow: StatusItemClaudeWindow
+    let lowerText: String
+    let lowerWindow: StatusItemClaudeWindow
 }
 
 struct StatusItemCodexProfileState: Equatable, Sendable {
@@ -38,20 +51,20 @@ struct StatusItemPresentation: Equatable, Sendable {
     static let openRouterMark = "◑"
     static let staleIndicator = "•"
 
-    /// One column per signed-in Claude account, each stacking 5-hour over weekly remaining
-    /// (Fable weekly when the plan has no all-model weekly limit).
+    /// One column per signed-in Claude account, each stacking the first two limits its plan
+    /// reports (see `StatusItemClaudeProfile`).
     let claudeProfiles: [StatusItemClaudeProfile]
     let codexProfiles: [StatusItemCodexProfile]
     /// nil when OpenRouter has no key or its balance could not be read; the label stays hidden then.
     let openRouterBalanceText: String?
     let isStale: Bool
 
-    var claudeFiveHourText: String {
-        claudeProfiles.first?.fiveHourText ?? "--"
+    var claudeUpperText: String {
+        claudeProfiles.first?.upperText ?? "--"
     }
 
-    var claudeWeeklyText: String {
-        claudeProfiles.first?.weeklyText ?? "--"
+    var claudeLowerText: String {
+        claudeProfiles.first?.lowerText ?? "--"
     }
 
     var codexWeeklyTexts: [String] {
@@ -59,7 +72,7 @@ struct StatusItemPresentation: Equatable, Sendable {
     }
 
     var visibleLabels: [String] {
-        claudeProfiles.flatMap { [$0.fiveHourText, $0.weeklyText] }
+        claudeProfiles.flatMap { [$0.upperText, $0.lowerText] }
             + codexWeeklyTexts
             + [openRouterBalanceText].compactMap { $0 }
     }
@@ -77,15 +90,16 @@ struct StatusItemPresentation: Equatable, Sendable {
         let codexContents = codexProfiles.map { Self.content(from: $0.state) }
 
         self.claudeProfiles = zip(claudeProfiles, claudeContents).map { profile, content in
-            let weeklyIsFable = content.snapshot?.weekly == nil && content.snapshot?.fableWeekly != nil
+            let windows = Self.claudeWindows(in: content.snapshot)
+            let upper = windows[0]
+            let lower = windows.count > 1 ? windows[1] : (window: .fableWeekly, value: nil)
             return StatusItemClaudeProfile(
                 profileID: profile.profileID,
                 name: profile.name,
-                fiveHourText: Self.label(value: content.snapshot?.fiveHour),
-                weeklyText: Self.label(
-                    value: weeklyIsFable ? content.snapshot?.fableWeekly : content.snapshot?.weekly
-                ),
-                weeklyIsFable: weeklyIsFable
+                upperText: Self.label(value: upper.value),
+                upperWindow: upper.window,
+                lowerText: Self.label(value: lower.value),
+                lowerWindow: lower.window
             )
         }
         self.codexProfiles = zip(codexProfiles, codexContents).map { profile, content in
@@ -112,6 +126,27 @@ struct StatusItemPresentation: Equatable, Sendable {
             codexProfiles: codexProfiles,
             openRouter: openRouter
         )
+    }
+
+    /// The limits an account's plan reports, in display order, with the same rule as the popover
+    /// rows: the 5-hour placeholder goes only when the plan reports another limit, and the weekly
+    /// one only when Fable stands in for it.
+    private static func claudeWindows(
+        in snapshot: UsageSnapshot?
+    ) -> [(window: StatusItemClaudeWindow, value: QuotaWindow?)] {
+        let fable = snapshot?.fableWeekly
+        let reportsLimit = snapshot?.weekly != nil || fable != nil
+        var windows: [(window: StatusItemClaudeWindow, value: QuotaWindow?)] = []
+        if snapshot?.fiveHour != nil || !reportsLimit {
+            windows.append((.fiveHour, snapshot?.fiveHour))
+        }
+        if snapshot?.weekly != nil || fable == nil {
+            windows.append((.weekly, snapshot?.weekly))
+        }
+        if let fable {
+            windows.append((.fableWeekly, fable))
+        }
+        return windows
     }
 
     private static func balanceLabel(from state: OpenRouterUsageState) -> String? {

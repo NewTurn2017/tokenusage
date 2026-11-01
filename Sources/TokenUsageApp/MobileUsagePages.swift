@@ -207,11 +207,14 @@ enum MobileUsagePages {
       }
       const claude = d.claude.find(a => a.active) || d.claude[0];
       const codex = d.codex.find(a => a.active) || d.codex[0];
-      // Team plans have no all-model weekly limit; their second window is the Fable one.
-      const claudeWeek = (claude.windows && claude.windows[1]) || claude.weekly;
+      // The first two limits the plan reports: 5-hour over weekly (Pro, Max), 5-hour over Fable
+      // (Team, no all-model weekly limit), weekly over Fable (Ultra, no 5-hour limit).
+      const claudeShown = (claude.windows && claude.windows.length
+        ? claude.windows
+        : [claude.fiveHour, claude.weekly]).slice(0, 2);
 
       if (accessory) {
-        const t = w.addText("C " + pct(claude.fiveHour.percent) + "/" + pct(claudeWeek.percent)
+        const t = w.addText("C " + claudeShown.map(x => pct(x.percent)).join("/")
           + "  X " + pct(codex.weekly.percent));
         t.font = Font.boldSystemFont(12);
         if (claude.coupon) w.addText("🎟 " + claude.coupon.text).font = Font.systemFont(10);
@@ -221,8 +224,7 @@ enum MobileUsagePages {
       const size = family === "small" ? 13 : 15;
       const title = w.addText("Claude · " + claude.name + (claude.coupon ? "  🎟" + claude.coupon.text.replace("쿠폰 ", "") : ""));
       title.font = Font.semiboldSystemFont(size - 3); title.textColor = Color.orange(); title.lineLimit = 1;
-      addLine(w, "5시간", pct(claude.fiveHour.percent), tone(claude.fiveHour.percent), size);
-      addLine(w, claudeWeek.label, pct(claudeWeek.percent), tone(claudeWeek.percent), size);
+      claudeShown.forEach(x => addLine(w, x.label, pct(x.percent), tone(x.percent), size));
       w.addSpacer(4);
       const codexTitle = w.addText("Codex · " + codex.name);
       codexTitle.font = Font.semiboldSystemFont(size - 3); codexTitle.textColor = Color.cyan(); codexTitle.lineLimit = 1;

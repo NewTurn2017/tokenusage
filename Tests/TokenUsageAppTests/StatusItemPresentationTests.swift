@@ -12,8 +12,8 @@ final class StatusItemPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(StatusItemPresentation.claudeMark, "✳")
-        XCTAssertEqual(presentation.claudeFiveHourText, "84%")
-        XCTAssertEqual(presentation.claudeWeeklyText, "52%")
+        XCTAssertEqual(presentation.claudeUpperText, "84%")
+        XCTAssertEqual(presentation.claudeLowerText, "52%")
         XCTAssertEqual(StatusItemPresentation.codexMark, "◎")
         XCTAssertEqual(presentation.codexWeeklyTexts, ["27%"])
         XCTAssertFalse(presentation.isStale)
@@ -55,7 +55,7 @@ final class StatusItemPresentationTests: XCTestCase {
             codexProfiles: codex(.unavailable(message: "offline"))
         )
 
-        XCTAssertEqual(presentation.claudeFiveHourText, "0%")
+        XCTAssertEqual(presentation.claudeUpperText, "0%")
         XCTAssertEqual(presentation.codexWeeklyTexts, ["--"])
     }
 

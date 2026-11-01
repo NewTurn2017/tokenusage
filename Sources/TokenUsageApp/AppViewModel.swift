@@ -56,6 +56,8 @@ public struct AppUsageSnapshot: Equatable, Sendable {
     public let claudeUsage: [ClaudeProfileUsage]
     public let claudeProfiles: [ClaudeProfileMetadata]
     public let activeClaudeProfileID: String?
+    /// Accounts that run from their own `ccN` directory and so can't be made the default account.
+    public let linkedClaudeProfileIDs: Set<String>
 
     public init(
         claude: UsageState,
@@ -68,7 +70,8 @@ public struct AppUsageSnapshot: Equatable, Sendable {
         removedCodexProfileNames: [String] = [],
         claudeUsage: [ClaudeProfileUsage] = [],
         claudeProfiles: [ClaudeProfileMetadata] = [],
-        activeClaudeProfileID: String? = nil
+        activeClaudeProfileID: String? = nil,
+        linkedClaudeProfileIDs: Set<String> = []
     ) {
         self.claude = claude
         self.codexUsage = codexUsage
@@ -79,6 +82,7 @@ public struct AppUsageSnapshot: Equatable, Sendable {
         self.claudeUsage = claudeUsage
         self.claudeProfiles = claudeProfiles
         self.activeClaudeProfileID = activeClaudeProfileID
+        self.linkedClaudeProfileIDs = linkedClaudeProfileIDs
     }
 }
 
@@ -290,11 +294,14 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
     public let fable: QuotaWindowPresentation?
     /// What the row shows, in order: 5-hour, then whichever weekly limits the plan reports.
     /// Team plans report no all-model weekly limit, only the Fable one, so Fable takes the weekly
-    /// slot there; an account that reported neither keeps the weekly placeholder.
+    /// slot there; Ultra plans can report no 5-hour limit, so the row starts at the weekly one.
     public let windows: [QuotaWindowPresentation]
     public let resetCoupon: ResetCouponPresentation?
     public let freshnessText: String
     public let isActive: Bool
+    /// Whether the row switches the default account. Accounts that run from their own `ccN`
+    /// directory can't be switched to, so their rows offer nothing to press.
+    public let isSelectable: Bool
 
     public var accessibilityIdentifier: String {
         "claude-profile-quota-\(profileID)"
@@ -314,15 +321,19 @@ public struct ClaudeProfileQuotaPresentation: Identifiable, Equatable, Sendable 
         window.reset == "--" ? "" : " \(window.reset)"
     }
 
-    /// 5-hour first, then whichever weekly limits were reported; the weekly placeholder stays when
-    /// neither was, so the row keeps its shape.
+    /// 5-hour first, then whichever weekly limits were reported. A plan without a 5-hour limit
+    /// (Ultra) starts at the weekly one; when nothing was reported the 5-hour and weekly
+    /// placeholders stay, so the row keeps its shape.
     static func displayedWindows(
         fiveHour: QuotaWindowPresentation,
         weekly: QuotaWindowPresentation,
         fable: QuotaWindowPresentation?,
+        reportsFiveHour: Bool,
         reportsWeekly: Bool
     ) -> [QuotaWindowPresentation] {
-        [fiveHour] + (reportsWeekly || fable == nil ? [weekly] : []) + (fable.map { [$0] } ?? [])
+        let limits = (reportsWeekly || fable == nil ? [weekly] : []) + (fable.map { [$0] } ?? [])
+        let reportsLimit = reportsWeekly || fable != nil
+        return (reportsFiveHour || !reportsLimit ? [fiveHour] : []) + limits
     }
 }
 
@@ -359,6 +370,9 @@ public final class AppViewModel: ObservableObject {
     @Published public private(set) var codexQuotaRows: [CodexProfileQuotaPresentation] = []
     @Published public private(set) var claudeQuotaRows: [ClaudeProfileQuotaPresentation] = []
     @Published public private(set) var claudeProfiles: [ClaudeProfileMetadata] = []
+    /// The accounts the default Claude Code account can be switched to: every saved account
+    /// except those that run from their own `ccN` directory.
+    @Published public private(set) var selectableClaudeProfiles: [ClaudeProfileMetadata] = []
     @Published public private(set) var selectedClaudeProfileID: String?
     @Published public private(set) var activeClaudeProfileName = "활성 계정 없음"
     @Published public private(set) var openRouterBalance: OpenRouterBalancePresentation
@@ -851,12 +865,17 @@ public final class AppViewModel: ObservableObject {
                     fiveHour: fiveHour,
                     weekly: weekly,
                     fable: fable,
+                    reportsFiveHour: value?.fiveHour != nil,
                     reportsWeekly: value?.weekly != nil
                 ),
                 resetCoupon: resetCoupon(from: value),
                 freshnessText: freshnessText(for: state),
-                isActive: index == activeIndex
+                isActive: index == activeIndex,
+                isSelectable: !snapshot.linkedClaudeProfileIDs.contains(profile.id)
             )
+        }
+        selectableClaudeProfiles = snapshot.claudeProfiles.filter {
+            !snapshot.linkedClaudeProfileIDs.contains($0.id)
         }
         selectedClaudeProfileID = snapshot.activeClaudeProfileID
         activeClaudeProfileName = snapshot.claudeProfiles.first {

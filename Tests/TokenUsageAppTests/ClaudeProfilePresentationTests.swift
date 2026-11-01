@@ -142,15 +142,15 @@ final class ClaudeProfilePresentationTests: XCTestCase {
 
         let presentation = model.statusItemPresentation
         XCTAssertEqual(
-            presentation.claudeProfiles.map(\.fiveHourText),
+            presentation.claudeProfiles.map(\.upperText),
             ["91%", "64%"]
         )
-        XCTAssertEqual(presentation.claudeProfiles.map(\.weeklyText), ["78%", "22%"])
+        XCTAssertEqual(presentation.claudeProfiles.map(\.lowerText), ["78%", "22%"])
         // The menu bar carries 5-hour over weekly per account; Fable stays in the popover.
         XCTAssertEqual(presentation.visibleLabels, ["91%", "78%", "64%", "22%"])
         print(
             "CLAUDE_QA menu_bar columns=2 "
-                + "values=\(presentation.claudeProfiles.map { "\($0.fiveHourText)/\($0.weeklyText)" }.joined(separator: ","))"
+                + "values=\(presentation.claudeProfiles.map { "\($0.upperText)/\($0.lowerText)" }.joined(separator: ","))"
         )
     }
 
@@ -210,13 +210,91 @@ final class ClaudeProfilePresentationTests: XCTestCase {
 
         // The menu bar keeps one column per account: weekly when the plan has it, else Fable.
         let menuBar = model.statusItemPresentation.claudeProfiles
-        XCTAssertEqual(menuBar.map(\.weeklyText), ["54%", "61%", "--"])
-        XCTAssertEqual(menuBar.map(\.weeklyIsFable), [false, true, false])
+        XCTAssertEqual(menuBar.map(\.lowerText), ["54%", "61%", "--"])
+        XCTAssertEqual(menuBar.map(\.lowerWindow), [.weekly, .fableWeekly, .weekly])
         let view = StatusItemView(presentation: model.statusItemPresentation)
         XCTAssertTrue(
-            view.accessibilityLabel()?.contains("claude2 68%, Fable weekly 61%") == true,
+            view.accessibilityLabel()?.contains("claude2 five hour 68%, Fable weekly 61%") == true,
             view.accessibilityLabel() ?? ""
         )
+    }
+
+    func testAnUltraAccountWithoutAFiveHourLimitStartsAtItsWeeklyLimit() {
+        let model = makeModel()
+        let snapshot = AppUsageSnapshot(
+            claude: .unavailable(message: ""),
+            codexUsage: [],
+            codexProfiles: [],
+            activeCodexProfileID: nil,
+            claudeUsage: [
+                ClaudeProfileUsage(
+                    profileID: "ultra",
+                    state: .fresh(UsageSnapshot(
+                        capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                        weekly: QuotaWindow(remainingPercent: 25, resetsAt: nil),
+                        fableWeekly: QuotaWindow(remainingPercent: 97, resetsAt: nil)
+                    ))
+                ),
+                ClaudeProfileUsage(
+                    profileID: "ultra-weekly-only",
+                    state: .fresh(UsageSnapshot(
+                        capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
+                        weekly: QuotaWindow(remainingPercent: 40, resetsAt: nil)
+                    ))
+                ),
+            ],
+            claudeProfiles: [
+                ClaudeProfileMetadata(id: "ultra", name: "claude-2020"),
+                ClaudeProfileMetadata(id: "ultra-weekly-only", name: "claude5"),
+            ],
+            activeClaudeProfileID: "ultra"
+        )
+
+        model.apply(.current(snapshot))
+
+        let rows = model.claudeQuotaRows
+        XCTAssertEqual(rows.map { $0.windows.map(\.window) }, [["주간", "Fable"], ["주간"]])
+        XCTAssertEqual(rows[0].windows.map(\.percentText), ["25%", "97%"])
+        XCTAssertFalse(rows[0].accessibilityLabel.contains("5시간"), rows[0].accessibilityLabel)
+
+        // The menu bar column moves up a slot too: weekly over Fable instead of "--" over weekly.
+        let menuBar = model.statusItemPresentation.claudeProfiles
+        XCTAssertEqual(menuBar.map(\.upperText), ["25%", "40%"])
+        XCTAssertEqual(menuBar.map(\.upperWindow), [.weekly, .weekly])
+        XCTAssertEqual(menuBar.map(\.lowerText), ["97%", "--"])
+        XCTAssertEqual(menuBar[0].lowerWindow, .fableWeekly)
+        let view = StatusItemView(presentation: model.statusItemPresentation)
+        XCTAssertTrue(
+            view.accessibilityLabel()?.contains("claude-2020 weekly 25%, Fable weekly 97%") == true,
+            view.accessibilityLabel() ?? ""
+        )
+        // The usage document the CLI, MCP and mods read follows the same rows.
+        let document = model.mobileUsageDocument()
+        XCTAssertEqual(document.claude.first?.windows.map(\.label), ["주간", "Fable"])
+    }
+
+    func testAccountsRunFromTheirOwnDirectoryCannotBeSwitchedTo() {
+        let model = makeModel()
+        var snapshot = twoAccountSnapshot(activeID: "claude-1")
+        snapshot = AppUsageSnapshot(
+            claude: snapshot.claude,
+            codexUsage: snapshot.codexUsage,
+            codexProfiles: snapshot.codexProfiles,
+            activeCodexProfileID: snapshot.activeCodexProfileID,
+            openRouter: snapshot.openRouter,
+            removedCodexProfileNames: snapshot.removedCodexProfileNames,
+            claudeUsage: snapshot.claudeUsage,
+            claudeProfiles: snapshot.claudeProfiles,
+            activeClaudeProfileID: snapshot.activeClaudeProfileID,
+            linkedClaudeProfileIDs: ["claude-2"]
+        )
+
+        model.apply(.current(snapshot))
+
+        XCTAssertEqual(model.claudeQuotaRows.map(\.isSelectable), [true, false])
+        XCTAssertEqual(model.selectableClaudeProfiles.map(\.id), ["claude-1"])
+        // Every account can still be deleted from the account menu.
+        XCTAssertEqual(model.claudeProfiles.map(\.id), ["claude-1", "claude-2"])
     }
 
     func testAMenuBarWithTwoClaudeAccountsStillFitsTheStatusBarHeight() {
@@ -244,7 +322,7 @@ final class ClaudeProfilePresentationTests: XCTestCase {
 
         XCTAssertTrue(model.claudeQuotaRows.isEmpty)
         XCTAssertEqual(model.claudeFiveHour.remaining, "12% 남음")
-        XCTAssertEqual(model.statusItemPresentation.claudeFiveHourText, "12%")
+        XCTAssertEqual(model.statusItemPresentation.claudeUpperText, "12%")
     }
 
     func testSwitchingAccountsAsksTheServiceAndKeepsTheNewSelection() async {

@@ -232,21 +232,21 @@ final class StatusItemView: NSView {
             using: StatusItemDesignSystem.Typography.valueFont
         )
         claudeProfileColumns = presentation.claudeProfiles.map { profile in
-            let fiveHour = Self.label(
-                text: profile.fiveHourText,
+            let upper = Self.label(
+                text: profile.upperText,
                 font: StatusItemDesignSystem.Typography.valueFont,
-                accessibilityLabel: "Claude \(profile.name) five hour remaining"
+                accessibilityLabel: "Claude \(profile.name) \(profile.upperWindow.accessibilityName) remaining"
             )
-            let weekly = Self.label(
-                text: profile.weeklyText,
+            let lower = Self.label(
+                text: profile.lowerText,
                 font: StatusItemDesignSystem.Typography.valueFont,
-                accessibilityLabel: "Claude \(profile.name) \(profile.weeklyAccessibilityName) remaining"
+                accessibilityLabel: "Claude \(profile.name) \(profile.lowerWindow.accessibilityName) remaining"
             )
-            fiveHour.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-five-hour")
-            weekly.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-weekly")
-            fiveHour.widthAnchor.constraint(equalToConstant: valueWidth).isActive = true
-            weekly.widthAnchor.constraint(equalToConstant: valueWidth).isActive = true
-            let column = NSStackView(views: [fiveHour, weekly])
+            upper.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-upper")
+            lower.setAccessibilityIdentifier("token-usage-claude-\(profile.profileID)-lower")
+            upper.widthAnchor.constraint(equalToConstant: valueWidth).isActive = true
+            lower.widthAnchor.constraint(equalToConstant: valueWidth).isActive = true
+            let column = NSStackView(views: [upper, lower])
             column.orientation = .vertical
             column.alignment = .leading
             column.spacing = .zero
@@ -298,7 +298,8 @@ final class StatusItemView: NSView {
             ? "no accounts"
             : presentation.claudeProfiles
                 .map {
-                    "\($0.name) \($0.fiveHourText), \($0.weeklyAccessibilityName) \($0.weeklyText)"
+                    "\($0.name) \($0.upperWindow.accessibilityName) \($0.upperText), "
+                        + "\($0.lowerWindow.accessibilityName) \($0.lowerText)"
                 }
                 .joined(separator: ", ")
         var description = "Claude \(claudeDescription); Codex \(codexDescription)"
