@@ -86,6 +86,60 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(storedProperties.localizedCaseInsensitiveContains("history"))
     }
 
+    func testFreshAccountsAreUpToDateWhenTheDefaultClaudeCodeAccountIsNoneOfThem() {
+        let base = populatedSnapshot(activeProfileID: "profile-2")
+        let snapshot = withClaudeAccounts(
+            base,
+            states: [
+                usageSnapshot(from: base.claude).map(UsageState.fresh)!,
+                usageSnapshot(from: base.claude).map(UsageState.fresh)!,
+            ]
+        )
+        let dependencies = makeDependencies(snapshot: snapshot)
+
+        dependencies.model.apply(.current(snapshot))
+
+        XCTAssertEqual(dependencies.model.statusText, "최신 상태")
+        XCTAssertNil(dependencies.model.errorText)
+    }
+
+    func testOneUnreadableAccountIsReportedAsPartialEvenWithoutAnActiveAccount() {
+        let base = populatedSnapshot(activeProfileID: "profile-2")
+        let snapshot = withClaudeAccounts(
+            base,
+            states: [
+                usageSnapshot(from: base.claude).map(UsageState.fresh)!,
+                .unavailable(message: "Claude usage refresh failed."),
+            ]
+        )
+        let dependencies = makeDependencies(snapshot: snapshot)
+
+        dependencies.model.apply(.current(snapshot))
+
+        XCTAssertEqual(dependencies.model.statusText, "일부 항목을 불러오지 못했습니다")
+    }
+
+    func testAStaleAccountIsReportedEvenWithoutAnActiveAccount() {
+        let base = populatedSnapshot(activeProfileID: "profile-2")
+        let lastGood = usageSnapshot(from: base.claude)!
+        let snapshot = withClaudeAccounts(
+            base,
+            states: [
+                .fresh(lastGood),
+                .stale(lastGood: lastGood, message: "Claude usage returned HTTP status 429."),
+            ]
+        )
+        let dependencies = makeDependencies(snapshot: snapshot)
+
+        dependencies.model.apply(.current(snapshot))
+
+        XCTAssertEqual(dependencies.model.statusText, "일부 항목은 이전 값입니다.")
+        XCTAssertEqual(
+            dependencies.model.errorText,
+            "Claude 사용량을 새로고침하지 못했습니다. 다시 시도해 주세요."
+        )
+    }
+
     func testOpenRouterNotConfiguredIsFriendlyAndDoesNotChangeClaudeCodexStatus() {
         let base = populatedSnapshot(activeProfileID: "profile-2")
         let snapshot = AppUsageSnapshot(
@@ -597,6 +651,25 @@ final class AppViewModelTests: XCTestCase {
                     rateLimit: "-1/10s"
                 )
             )
+        )
+    }
+
+    /// Saved Claude accounts, none of which is the default Claude Code account: the live slot
+    /// is never fetched in that case, so it stays unavailable.
+    private func withClaudeAccounts(
+        _ base: AppUsageSnapshot,
+        states: [UsageState]
+    ) -> AppUsageSnapshot {
+        let ids = states.indices.map { "claude-\($0 + 1)" }
+        return AppUsageSnapshot(
+            claude: .unavailable(message: "Claude usage refresh failed."),
+            codexUsage: base.codexUsage,
+            codexProfiles: base.codexProfiles,
+            activeCodexProfileID: base.activeCodexProfileID,
+            openRouter: base.openRouter,
+            claudeUsage: zip(ids, states).map { ClaudeProfileUsage(profileID: $0, state: $1) },
+            claudeProfiles: ids.map { ClaudeProfileMetadata(id: $0, name: $0) },
+            activeClaudeProfileID: nil
         )
     }
 

@@ -810,11 +810,19 @@ public final class AppViewModel: ObservableObject {
             lastRefreshText = "마지막 새로고침 시각 없음"
         }
 
+        // Once accounts are captured the live credential is no longer fetched, and the default
+        // Claude Code account may be none of them; the header then speaks for the rows it shows.
+        let claudeStates = statusClaudeProfiles.isEmpty
+            ? [claude]
+            : statusClaudeProfiles.map(\.state)
+        let claudeIsUnavailable = claudeStates.allSatisfy(\.isUnavailable)
+        let someClaudeAccountsUnavailable = !claudeIsUnavailable
+            && claudeStates.contains(where: \.isUnavailable)
         let staleServices = [
-            claude.isStale ? "Claude" : nil,
+            claudeStates.contains(where: \.isStale) ? "Claude" : nil,
             codex.isStale ? "Codex" : nil,
         ].compactMap { $0 }
-        let unavailableServices = [claude, codex].filter(\.isUnavailable).count
+        let unavailableServices = [claudeIsUnavailable, codex.isUnavailable].filter { $0 }.count
         if !staleServices.isEmpty {
             statusText = "일부 항목은 이전 값입니다."
             errorText = "\(staleServices.joined(separator: ", ")) 사용량을 "
@@ -822,7 +830,7 @@ public final class AppViewModel: ObservableObject {
         } else if unavailableServices == 2 {
             statusText = "사용량을 불러오지 못했습니다"
             errorText = "서비스를 불러오지 못했습니다. 다시 시도해 주세요."
-        } else if unavailableServices == 1 {
+        } else if unavailableServices == 1 || someClaudeAccountsUnavailable {
             statusText = "일부 항목을 불러오지 못했습니다"
             errorText = "일부 서비스를 불러오지 못했습니다. 다시 시도해 주세요."
         } else {
