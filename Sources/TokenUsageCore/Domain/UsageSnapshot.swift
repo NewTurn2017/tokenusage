@@ -21,6 +21,9 @@ public struct UsageSnapshot: Equatable, Sendable {
     public let fiveHour: QuotaWindow?
     public let weekly: QuotaWindow?
     public let fableWeekly: QuotaWindow?
+    /// How much of the all-model weekly limit Fable usage took, in percent of that limit; nil
+    /// when the provider does not report the split.
+    public let fableUsedPercentOfWeekly: Double?
     public let rateLimitResetCreditsAvailableCount: Int?
     /// When the soonest-expiring reset credit lapses; nil when the provider reports no deadline.
     public let rateLimitResetCreditsExpireAt: Date?
@@ -32,6 +35,7 @@ public struct UsageSnapshot: Equatable, Sendable {
         fiveHour: QuotaWindow? = nil,
         weekly: QuotaWindow? = nil,
         fableWeekly: QuotaWindow? = nil,
+        fableUsedPercentOfWeekly: Double? = nil,
         rateLimitResetCreditsAvailableCount: Int? = nil,
         rateLimitResetCreditsExpireAt: Date? = nil,
         codexCredits: CodexCredits? = nil,
@@ -41,6 +45,7 @@ public struct UsageSnapshot: Equatable, Sendable {
         self.fiveHour = fiveHour
         self.weekly = weekly
         self.fableWeekly = fableWeekly
+        self.fableUsedPercentOfWeekly = fableUsedPercentOfWeekly
         self.rateLimitResetCreditsAvailableCount = rateLimitResetCreditsAvailableCount
         self.rateLimitResetCreditsExpireAt = rateLimitResetCreditsExpireAt
         self.codexCredits = codexCredits

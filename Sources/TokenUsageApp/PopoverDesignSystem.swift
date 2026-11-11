@@ -31,6 +31,7 @@ enum PopoverDesignSystem {
         static let border: Double = 0.16
         static let track: Double = 0.12
         static let badge: Double = 0.14
+        static let fableUsed: Double = 0.38
     }
 
     enum Scale {

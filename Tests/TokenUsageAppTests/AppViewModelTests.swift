@@ -53,6 +53,10 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.claudeFiveHour.reset, "8월 4일 오전 9:00 초기화")
         XCTAssertEqual(model.claudeWeekly.remaining, "42% 남음")
         XCTAssertEqual(model.claudeWeekly.reset, "8월 10일 오후 5:30 초기화")
+        XCTAssertEqual(model.claudeWeekly.fableUsedFraction, 0.08)
+        XCTAssertEqual(model.claudeWeekly.fableUsedText, "Fable 사용분 8%")
+        XCTAssertNil(model.claudeFiveHour.fableUsedFraction)
+        XCTAssertNil(model.claudeFableWeekly.fableUsedFraction)
         XCTAssertEqual(model.claudeFableWeekly.remaining, "84% 남음")
         XCTAssertEqual(model.claudeFableWeekly.reset, "8월 11일 오후 12:15 초기화")
         XCTAssertEqual(model.codexWeekly.remaining, "63% 남음")
@@ -620,7 +624,8 @@ final class AppViewModelTests: XCTestCase {
             fableWeekly: QuotaWindow(
                 remainingPercent: 84,
                 resetsAt: date("2026-08-11T12:15:00Z")
-            )
+            ),
+            fableUsedPercentOfWeekly: 8
         )
         let codex = UsageSnapshot(
             capturedAt: date("2026-08-03T23:05:00Z"),

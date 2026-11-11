@@ -168,6 +168,9 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
     public let remaining: String
     public let reset: String
     public let remainingFraction: Double?
+    /// The part of the used-up share that Fable usage took, as a fraction of the whole limit.
+    /// Only the all-model weekly window carries it, and only when the provider reports the split.
+    public let fableUsedFraction: Double?
     public let pace: QuotaPace
 
     public init(
@@ -176,6 +179,7 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
         remaining: String,
         reset: String,
         remainingFraction: Double?,
+        fableUsedFraction: Double? = nil,
         pace: QuotaPace = .unknown
     ) {
         self.service = service
@@ -183,6 +187,7 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
         self.remaining = remaining
         self.reset = reset
         self.remainingFraction = remainingFraction
+        self.fableUsedFraction = fableUsedFraction
         self.pace = pace
     }
 
@@ -190,6 +195,11 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
     /// and need the room for a third window.
     public var percentText: String {
         remainingFraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "--"
+    }
+
+    /// "Fable 사용분 17%", explaining the tinted stretch of the bar.
+    public var fableUsedText: String? {
+        fableUsedFraction.map { "Fable 사용분 \(Int(($0 * 100).rounded()))%" }
     }
 
     /// Short Korean label so the pace is readable without relying on colour alone.
@@ -210,7 +220,8 @@ public struct QuotaWindowPresentation: Equatable, Sendable {
 
     public var accessibilityLabel: String {
         let pace = paceText.map { ", 사용 속도 \($0)" } ?? ""
-        return "\(service), \(window) 창, \(remaining), \(reset)\(pace)"
+        let fable = fableUsedText.map { ", \($0)" } ?? ""
+        return "\(service), \(window) 창, \(remaining)\(fable), \(reset)\(pace)"
     }
 }
 
@@ -782,7 +793,8 @@ public final class AppViewModel: ObservableObject {
         claudeWeekly = presentation(
             service: "Claude",
             window: "주간",
-            value: claudeSnapshot?.weekly
+            value: claudeSnapshot?.weekly,
+            fableUsedPercent: claudeSnapshot?.fableUsedPercentOfWeekly
         )
         claudeFableWeekly = presentation(
             service: "Claude",
@@ -858,7 +870,12 @@ public final class AppViewModel: ObservableObject {
             let value = usageSnapshot(from: state)
             let service = "Claude \(profile.name)"
             let fiveHour = compactPresentation(service: service, window: "5시간", value: value?.fiveHour)
-            let weekly = compactPresentation(service: service, window: "주간", value: value?.weekly)
+            let weekly = compactPresentation(
+                service: service,
+                window: "주간",
+                value: value?.weekly,
+                fableUsedPercent: value?.fableUsedPercentOfWeekly
+            )
             let fable = value?.fableWeekly.map {
                 compactPresentation(service: service, window: "Fable", value: $0)
             }
@@ -909,15 +926,22 @@ public final class AppViewModel: ObservableObject {
     private func compactPresentation(
         service: String,
         window: String,
-        value: QuotaWindow?
+        value: QuotaWindow?,
+        fableUsedPercent: Double? = nil
     ) -> QuotaWindowPresentation {
-        let full = presentation(service: service, window: window, value: value)
+        let full = presentation(
+            service: service,
+            window: window,
+            value: value,
+            fableUsedPercent: fableUsedPercent
+        )
         return QuotaWindowPresentation(
             service: full.service,
             window: full.window,
             remaining: full.remaining,
             reset: full.reset == "초기화 시각 없음" ? "--" : full.reset,
             remainingFraction: full.remainingFraction,
+            fableUsedFraction: full.fableUsedFraction,
             pace: full.pace
         )
     }
@@ -1017,7 +1041,8 @@ public final class AppViewModel: ObservableObject {
     private func presentation(
         service: String,
         window: String,
-        value: QuotaWindow?
+        value: QuotaWindow?,
+        fableUsedPercent: Double? = nil
     ) -> QuotaWindowPresentation {
         guard let value,
               value.remainingPercent.isFinite,
@@ -1034,6 +1059,10 @@ public final class AppViewModel: ObservableObject {
             remaining: "\(roundedPercent)% 남음",
             reset: reset,
             remainingFraction: remainingPercent / 100,
+            // Fable usage is part of what was used, so it can never exceed the used share.
+            fableUsedFraction: fableUsedPercent.map {
+                min(max($0, 0), 100 - remainingPercent) / 100
+            },
             pace: value.pace(now: now())
         )
     }

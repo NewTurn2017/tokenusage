@@ -2,8 +2,8 @@
 
 ## 다운로드와 설치
 
-[v0.4.1 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.4.1)에서
-`TokenUsage-0.4.1-macos-universal.zip`을 받아 압축을 풀고,
+[v0.5.0 다운로드](https://github.com/NewTurn2017/tokenusage/releases/tag/v0.5.0)에서
+`TokenUsage-0.5.0-macos-universal.zip`을 받아 압축을 풀고,
 `Token Usage.app`을 응용 프로그램 폴더로 옮겨 실행하세요.
 Apple Silicon과 Intel용 실행 파일을 함께 포함하며 macOS 14 이상이 필요합니다.
 서비스별 로그인 요구 사항은 아래를 참고하세요.

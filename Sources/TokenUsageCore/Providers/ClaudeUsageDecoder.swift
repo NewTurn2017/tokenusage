@@ -26,6 +26,10 @@ public struct ClaudeUsageDecoder: Sendable {
             fiveHour: fiveHourResult.window,
             weekly: weeklyResult.window,
             fableWeekly: fableResult.window,
+            fableUsedPercentOfWeekly: decodeFableShareOfWeekly(
+                response["weekly_scoped_shares"],
+                limitIndex: fableResult.index
+            ),
             rateLimitResetCreditsAvailableCount: resetCredits?.count,
             rateLimitResetCreditsExpireAt: resetCredits?.expiresAt,
             warnings: [fiveHourResult.warning, weeklyResult.warning, fableResult.warning].compactMap { $0 }
@@ -89,9 +93,33 @@ public struct ClaudeUsageDecoder: Sendable {
         return (result.window, result.warning)
     }
 
-    private func decodeFableLimit(_ value: Any?) throws -> (window: QuotaWindow?, warning: UsageWarning?) {
+    /// Reads the undocumented `weekly_scoped_shares` block, which says how much of the all-model
+    /// weekly limit the scoped (Fable) limit's usage took. Entries point at `limits` by index.
+    /// Its shape is not a contract, so anything unexpected hides the split instead of failing
+    /// the whole usage read.
+    private func decodeFableShareOfWeekly(_ value: Any?, limitIndex: Int?) -> Double? {
+        guard let limitIndex, let shares = value as? [Any] else { return nil }
+        for rawShare in shares {
+            guard let share = rawShare as? [String: Any],
+                  (share["limit_index"] as? NSNumber)?.intValue == limitIndex
+            else {
+                continue
+            }
+            guard let used = (share["used_percent_of_weekly"] as? NSNumber)?.doubleValue,
+                  (0...100).contains(used)
+            else {
+                return nil
+            }
+            return used
+        }
+        return nil
+    }
+
+    private func decodeFableLimit(
+        _ value: Any?
+    ) throws -> (window: QuotaWindow?, warning: UsageWarning?, index: Int?) {
         guard let limits = try UsageDecoderSupport.optionalArray(value, path: "limits") else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
 
         for (index, rawLimit) in limits.enumerated() {
@@ -128,9 +156,9 @@ public struct ClaudeUsageDecoder: Sendable {
                 window: .fableWeekly,
                 resetsAt: resetsAt
             )
-            return (result.window, result.warning)
+            return (result.window, result.warning, index)
         }
 
-        return (nil, nil)
+        return (nil, nil, nil)
     }
 }

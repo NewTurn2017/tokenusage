@@ -618,13 +618,25 @@ struct QuotaBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(PopoverDesignSystem.Palette.track)
                 if let fraction = presentation.remainingFraction {
+                    let remaining = min(max(fraction, 0), 1)
+                    // The stretch just past what remains is what Fable used: a reset credit
+                    // would give that much back.
+                    if let fableUsed = presentation.fableUsedFraction, fableUsed > 0 {
+                        Capsule()
+                            .fill(
+                                PopoverDesignSystem.Palette.quota(presentation, provider: provider)
+                                    .opacity(PopoverDesignSystem.Opacity.fableUsed)
+                            )
+                            .frame(width: proxy.size.width * min(remaining + fableUsed, 1))
+                    }
                     Capsule()
                         .fill(PopoverDesignSystem.Palette.quota(presentation, provider: provider))
-                        .frame(width: proxy.size.width * min(max(fraction, 0), 1))
+                        .frame(width: proxy.size.width * remaining)
                 }
             }
         }
         .frame(height: PopoverDesignSystem.Size.progressHeight)
+        .help(presentation.fableUsedText ?? "")
         .accessibilityHidden(true)
     }
 }

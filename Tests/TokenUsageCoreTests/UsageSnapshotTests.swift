@@ -76,6 +76,35 @@ final class UsageSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.fableWeekly?.resetsAt, Date(timeIntervalSince1970: 1_786_320_000.5))
     }
 
+    func testClaudeReadsHowMuchOfTheWeeklyLimitFableUsed() throws {
+        func share(_ shares: String) throws -> Double? {
+            try ClaudeUsageDecoder().decode(
+                jsonData(
+                    """
+                    {"seven_day":{"utilization":22,"resets_at":null},
+                     "limits":[
+                      {"kind":"weekly_all","scope":null,"percent":22,"resets_at":null},
+                      {"kind":"weekly_scoped","scope":{"model":{"display_name":"Fable"}},"percent":34,"resets_at":null}
+                     ],
+                     "weekly_scoped_shares":\(shares)}
+                    """
+                )
+            ).fableUsedPercentOfWeekly
+        }
+
+        XCTAssertEqual(
+            try share(#"[{"limit_index":1,"used_percent_of_weekly":17,"allowance_percent_of_weekly":50}]"#),
+            17
+        )
+        // A share for some other limit, an out-of-range value, or an unexpected shape hides the
+        // split without failing the usage read.
+        XCTAssertNil(try share(#"[{"limit_index":0,"used_percent_of_weekly":17}]"#))
+        XCTAssertNil(try share(#"[{"limit_index":1,"used_percent_of_weekly":140}]"#))
+        XCTAssertNil(try share(#"[{"limit_index":1,"used_percent_of_weekly":"17"}]"#))
+        XCTAssertNil(try share(#"{"limit_index":1}"#))
+        XCTAssertNil(try share("null"))
+    }
+
     func testClaudeResetCreditsSumRemainingGrantsAndKeepTheSoonestDeadline() throws {
         let snapshot = try ClaudeUsageDecoder().decode(
             jsonData(
