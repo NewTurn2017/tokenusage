@@ -174,7 +174,8 @@ final class MobileUsageServerTests: XCTestCase {
                     capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
                     fiveHour: QuotaWindow(remainingPercent: 96, resetsAt: nil),
                     weekly: QuotaWindow(remainingPercent: 54, resetsAt: nil),
-                    fableWeekly: QuotaWindow(remainingPercent: 70, resetsAt: nil)
+                    fableWeekly: QuotaWindow(remainingPercent: 70, resetsAt: nil),
+                    fableUsedPercentOfWeekly: 17
                 ))),
                 ClaudeProfileUsage(profileID: "team", state: .fresh(UsageSnapshot(
                     capturedAt: Date(timeIntervalSince1970: 1_787_000_000),
@@ -202,6 +203,9 @@ final class MobileUsageServerTests: XCTestCase {
             ["5시간", "Fable"],
         ])
         XCTAssertEqual(document.claude.map { $0.fable?.percent }, [70, 61])
+        XCTAssertEqual(document.claude[0].weekly.fableUsed, 17, "the weekly bar's Fable stretch")
+        XCTAssertEqual(document.claude[0].windows.map(\.fableUsed), [nil, 17, nil])
+        XCTAssertNil(weekly["fableUsed"], "left out where nothing was reported")
         // The page used to print "undefined%" because a nil percent dropped the key entirely.
         XCTAssertTrue(weekly.keys.contains("percent"))
         XCTAssertTrue(weekly["percent"] is NSNull)
@@ -221,6 +225,7 @@ final class MobileUsageServerTests: XCTestCase {
 
         XCTAssertFalse(page.contains("percent === null"), "undefined must not slip past the check")
         XCTAssertTrue(page.contains("a.windows ||"), "accounts draw the windows they report")
+        XCTAssertTrue(page.contains("w.fableUsed > 0"), "the weekly bar tints what Fable used")
         // Pro/Max: 5-hour and weekly; Team: 5-hour and Fable; Ultra: weekly and Fable.
         XCTAssertTrue(
             widget.contains("? claude.windows") && widget.contains(".slice(0, 2)"),

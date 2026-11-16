@@ -45,8 +45,9 @@ enum MobileUsagePages {
     .windows { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
     .label { color: var(--muted); font-size: 12px; }
     .pct { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .bar { height: 4px; background: var(--track); border-radius: 2px; overflow: hidden; margin: 3px 0; }
-    .bar > div { height: 100%; border-radius: 2px; }
+    .bar { position: relative; height: 4px; background: var(--track); border-radius: 2px; overflow: hidden; margin: 3px 0; }
+    .bar > div { position: absolute; left: 0; top: 0; height: 100%; border-radius: 2px; }
+    .bar > .fable { opacity: 0.38; }
     .reset { color: var(--muted); font-size: 11px; }
     .error { color: var(--bad); margin: 0 2px 12px; font-size: 13px; }
     </style>
@@ -80,8 +81,16 @@ enum MobileUsagePages {
       box.append(pct);
       const bar = el("div", "bar"); const fill = el("div");
       fill.style.width = (w.percent || 0) + "%"; fill.style.background = tone(w.percent);
+      // The lighter stretch just past what remains is what Fable used of this limit.
+      const fableUsed = w.percent != null && w.fableUsed > 0 ? w.fableUsed : 0;
+      if (fableUsed) {
+        const tint = el("div", "fable");
+        tint.style.width = Math.min(w.percent + fableUsed, 100) + "%"; tint.style.background = tone(w.percent);
+        bar.append(tint);
+      }
       bar.append(fill); box.append(bar);
       box.append(el("div", "reset", [w.reset, w.pace].filter(v => v && v !== "--").join(" · ")));
+      if (fableUsed) box.append(el("div", "reset", "Fable 사용분 " + fableUsed + "%"));
       return box;
     }
     function accountView(a, windows) {

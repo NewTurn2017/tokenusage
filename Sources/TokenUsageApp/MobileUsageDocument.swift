@@ -10,9 +10,12 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
         public let remaining: String
         public let reset: String
         public let pace: String?
+        /// How much of this limit Fable usage took, in percent of the whole limit. Only the
+        /// all-model weekly window carries it; the key is left out everywhere else.
+        public let fableUsed: Int?
 
         private enum CodingKeys: String, CodingKey {
-            case label, percent, remaining, reset, pace
+            case label, percent, remaining, reset, pace, fableUsed
         }
 
         /// Writes a missing value as an explicit `null`; the synthesized encoder drops the key,
@@ -24,6 +27,7 @@ public struct MobileUsageDocument: Encodable, Equatable, Sendable {
             try container.encode(remaining, forKey: .remaining)
             try container.encode(reset, forKey: .reset)
             try container.encode(pace, forKey: .pace)
+            try container.encodeIfPresent(fableUsed, forKey: .fableUsed)
         }
     }
 
@@ -173,7 +177,10 @@ extension AppViewModel {
             percent: window.remainingFraction.map { Int(($0 * 100).rounded()) },
             remaining: window.remaining,
             reset: window.reset,
-            pace: window.paceText
+            pace: window.paceText,
+            fableUsed: window.fableUsedFraction
+                .map { Int(($0 * 100).rounded()) }
+                .flatMap { $0 > 0 ? $0 : nil }
         )
     }
 
